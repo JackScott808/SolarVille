@@ -4,6 +4,7 @@ import time
 import threading
 from config import PEER_IP, LOCAL_IP
 import pandas as pd
+from io import StringIO
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -69,7 +70,7 @@ def update_trade_data():
     df_json = data.get('df')
     if df_json:
         try:
-            df = pd.read_json(df_json, orient='split')
+            df = pd.read_json(StringIO(df_json), orient='split')
             logging.info(f"Received updated DataFrame with Enable column updated.")
         except ValueError as e:
             logging.error(f"Error parsing DataFrame JSON: {e}")
