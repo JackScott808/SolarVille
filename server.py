@@ -66,13 +66,15 @@ def update_trade_data():
         peer_data[peer_ip] = {}
     peer_data[peer_ip].update(data)
     
-    # Handle the incoming DataFrame
     df_json = data.get('df')
     if df_json:
-        df = pd.read_json(df_json, orient='split')
-        logging.info(f"Received updated DataFrame with Enable column updated.")
+        try:
+            df = pd.read_json(df_json, orient='split')
+            logging.info(f"Received updated DataFrame with Enable column updated.")
+        except ValueError as e:
+            logging.error(f"Error parsing DataFrame JSON: {e}")
         
-    trade_amount = data.get('trade_amountn', 'N/A')
+    trade_amount = data.get('trade_amount', 'N/A')
     buy_grid_price = data.get('buy_grid_price', 'N/A')
     peer_price = data.get('peer_price', 'N/A')
     battery_charge = data.get('battery_charge', 'N/A')
