@@ -32,11 +32,7 @@ def start_simulation_local(args):
     global trade_amount
     global battery_soc
     
-    df['generation'] = 0.0  # Initialize generation column
-    df['balance'] = 0.0  # Initialize balance column
-    df['currency'] = 0  # Initialize the currency column to 0
-    df['battery_charge'] = 0.5  # Assume 50% initial charge
-    df['Enable'] = 0  # Initialize Enable column with 0
+    df = pd.DataFrame(columns=['generation', 'demand', 'balance', 'currency', 'battery_charge', 'Enable'])
     
     end_date = calculate_end_date(args.start_date, args.timescale)
     total_simulation_time = (df.index[-1] - df.index[0]).total_seconds()
