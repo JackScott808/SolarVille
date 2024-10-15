@@ -13,6 +13,7 @@ from config import LOCAL_IP, PEER_IP
 from solarMonitor import get_current_readings
 from battery_energy_management import battery_charging, battery_supply
 from lcdControlTest import display_message
+from io import StringIO
 
 SOLAR_SCALE_FACTOR = 8000  # Adjust this value as needed
 trade_amount = 0
@@ -20,6 +21,18 @@ battery_soc = 0.5
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def fetch_dataframe():
+    try:
+        response = requests.get(f'http://{PEER_IP}:5000/get_dataframe', timeout=3)
+        if response.status_code == 200:
+            return pd.read_json(StringIO(response.text), orient='split')
+        else:
+            logging.error(f"Failed to fetch DataFrame. Status code: {response.status_code}")
+            return None
+    except Exception as e:
+        logging.error(f"Error fetching DataFrame: {e}")
+        return None
 
 def start_simulation_local(args):
     start_time = time.time()
@@ -32,7 +45,12 @@ def start_simulation_local(args):
     global trade_amount
     global battery_soc
     
-    df = pd.DataFrame(columns=['generation', 'demand', 'balance', 'currency', 'battery_charge', 'Enable'])
+    # Initialize the DataFrame with the loaded data
+    df['generation'] = 0.0
+    df['balance'] = 0.0
+    df['currency'] = 0
+    df['battery_charge'] = 0.5
+    df['Enable'] = 0
     
     end_date = calculate_end_date(args.start_date, args.timescale)
     total_simulation_time = (df.index[-1] - df.index[0]).total_seconds()
@@ -46,51 +64,45 @@ def start_simulation_local(args):
 
     ready_event.wait()  # Wait for the plot to be initialized
 
-    start_time = time.time()
-
     try:
         while True:
-            current_time = time.time()
-            elapsed_time = current_time - start_time
-
-            simulated_elapsed_time = elapsed_time * simulation_speed
-
-            if simulated_elapsed_time >= total_simulation_time:
-                logging.info("Simulation completed.")
-                break
-
-            timestamp_index = int(simulated_elapsed_time / (30 * 60))  # 30-minute intervals
-            if timestamp_index >= len(df.index):
-                logging.info("Reached end of data. Simulation completed.")
-                break
-
-            timestamp = df.index[timestamp_index]
-            current_data = df.loc[timestamp]
-
-            logging.info(f"Elapsed time: {elapsed_time:.2f}, Current data: {current_data}")
-
-            if not current_data.empty:
-                df = process_trading_and_lcd(df, timestamp, current_data, queue)
-                logging.info("Processed data and LCD update")
+            response = requests.get(f'http://{PEER_IP}:5000/simulation_status')
+            if response.status_code == 200:
+                status = response.json()
+                if status['status'] == 'completed':
+                    logging.info("Simulation completed.")
+                    break
+                elif status['status'] == 'in_progress':
+                    timestamp = pd.Timestamp(status['current_timestamp'])
+                    if timestamp in df.index:
+                        current_data = df.loc[timestamp]
+                        df = process_trading_and_lcd(df, timestamp, current_data, queue)
+                        logging.info(f"Processed timestamp: {timestamp}")
+                    else:
+                        logging.warning(f"Timestamp {timestamp} not found in local DataFrame")
+                else:
+                    logging.info("Waiting for simulation to start...")
             else:
-                logging.warning("Empty current_data, skipping processing")
-
-            time.sleep(1)  # Adjust sleep time as needed
+                logging.error("Failed to get simulation status from prosumer")
+            
+            time.sleep(1)  # Adjust as needed
 
     except KeyboardInterrupt:
         logging.info("Simulation interrupted.")
     finally:
         queue.put("done")
         plot_process.join()
-    
+        logging.info("Simulation ended.")
 
+    # Send final sync to indicate simulation completion
+    requests.post(f'http://{PEER_IP}:5000/sync', json={'timestamp': 'END'})
 
 def process_trading_and_lcd(df, timestamp, current_data, queue):
     try:
         readings = get_current_readings()
-        solar_power = readings['solar_power'] * SOLAR_SCALE_FACTOR# unit: W
+        solar_power = readings['solar_power'] * SOLAR_SCALE_FACTOR  # unit: W
         # Assume the solar power remains the same in every half hour, convert W to kW
-        solar_energy = solar_power * 0.5 / 1000 # unit: kWh
+        solar_energy = solar_power * 0.5 / 1000  # unit: kWh
     except Exception as e:
         logging.error(f"Failed to get solar data: {e}")
         solar_power = 0
@@ -99,7 +111,7 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     global trade_amount
     global battery_soc
     
-    demand = current_data['energy'] # unit kWh
+    demand = current_data['energy']  # unit kWh
     
     # Calculate balance unit kWh
     balance = solar_energy - demand
@@ -122,12 +134,11 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     }
     make_api_call(f'http://{PEER_IP}:5000/update_peer_data', update_data_1)
 
-    
     # Get peer data for trading
     peer_data_response = requests.get(f'http://{LOCAL_IP}:5000/get_peer_data')
     if peer_data_response.status_code == 200:
         peer_data = peer_data_response.json()
-         # Get peer demand with error checking
+        # Get peer demand with error checking
         peer_demand = peer_data.get('demand', 0)
         peer_balance = peer_data.get('balance', 0)
         logging.info(f"consumer demand:{peer_demand} kWh, "
@@ -135,33 +146,32 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     else:
         logging.error("Failed to get peer demand and balance")
         peer_demand = 0
+        peer_balance = 0
 
     total_demand = demand + peer_demand
     total_supply = solar_energy
 
-    sell_grid_price = 0.05 # unit: ￡/kWh
-    buy_grid_price = 0.25 # unit: ￡/kWh
-    peer_price = calculate_price(total_demand, total_supply, buy_grid_price = buy_grid_price, sell_grid_price = sell_grid_price)
+    sell_grid_price = 0.05  # unit: ￡/kWh
+    buy_grid_price = 0.25  # unit: ￡/kWh
+    peer_price = calculate_price(total_demand, total_supply, buy_grid_price=buy_grid_price, sell_grid_price=sell_grid_price)
 
     # Log the calculated prices
     logging.info(f"Calculated prices - Sell Grid Price: {sell_grid_price:.2f} ￡/kWh, "
                  f"Peer Price: {peer_price:.2f} ￡/kWh, "
                  f"Buy Grid Price: {buy_grid_price:.2f} ￡/kWh")
 
-    
-            # Perform trading (now in kilo Watt-hours)
+    # Perform trading (now in kilo Watt-hours)
     if balance >= 0:
         # The household has excess energy
         if peer_balance >= 0:
             trade_amount = 0
-            battery_soc, sell_to_grid = battery_charging(excess_energy=balance, battery_soc=battery_soc, battery_capacity = 5)
+            battery_soc, sell_to_grid = battery_charging(excess_energy=balance, battery_soc=battery_soc, battery_capacity=5)
             # the other household has excess energy too, this household energy can sell to grid
             df.loc[timestamp, ['balance', 'currency', 'battery_charge']] = [
                 df.loc[timestamp, 'balance'] - balance,  # update balance
                 df.loc[timestamp, 'currency'] + sell_to_grid * sell_grid_price,  # update currency
                 battery_soc  # update battery_charge
             ]
-
             logging.info(f"Sold {balance*1000:.2f} Wh to the grid at {sell_grid_price:.2f} ￡/kWh")
         elif peer_balance < 0:
             # the other household needs energy
@@ -169,7 +179,7 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
                 # energy is enough to supply the other household
                 trade_amount = abs(peer_balance)
                 remaining_balance = balance - trade_amount
-                battery_soc, sell_to_grid = battery_charging(excess_energy=remaining_balance, battery_soc=battery_soc, battery_capacity = 5)
+                battery_soc, sell_to_grid = battery_charging(excess_energy=remaining_balance, battery_soc=battery_soc, battery_capacity=5)
                 df.loc[timestamp, ['balance', 'currency', 'battery_charge']] = [
                     df.loc[timestamp, 'balance'] - balance,  # update balance 
                     df.loc[timestamp, 'currency'] + (trade_amount * peer_price) + (sell_to_grid * sell_grid_price), # update currency
@@ -186,26 +196,20 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
                 ]
                 logging.info(f"Sold {trade_amount*1000:.2f} Wh to peer at {peer_price:.2f} ￡/kWh")
     elif balance < 0:
-        #test if the program can run to this point
         logging.info(f"need electricity")
         trade_amount = 0
         # the household needs energy
-        battery_soc, buy_from_grid = battery_supply(excess_energy = balance, battery_soc = battery_soc, battery_capacity = 5, depth_of_discharge=0.8)
+        battery_soc, buy_from_grid = battery_supply(excess_energy=balance, battery_soc=battery_soc, battery_capacity=5, depth_of_discharge=0.8)
         
         logging.info(f"Updating DataFrame at timestamp: {timestamp}, Current balance: {df.loc[timestamp, 'balance']},"
-                        f" Current currency: {df.loc[timestamp, 'currency']},"
-                        f"buy_from_grid: {buy_from_grid},buy_grid_price:{buy_grid_price}")
+                     f" Current currency: {df.loc[timestamp, 'currency']},"
+                     f"buy_from_grid: {buy_from_grid},buy_grid_price:{buy_grid_price}")
         df.loc[timestamp, ['balance', 'currency', 'battery_charge']] = [
             df.loc[timestamp, 'balance'] - balance,  # update balance
             df.loc[timestamp, 'currency'] - buy_from_grid * buy_grid_price, # update currency
             battery_soc  # update battery_charge
         ]
         logging.info(f"Bought {buy_from_grid*1000:.2f} Wh from grid at {buy_grid_price:.2f} ￡/kWh")
-    
-    #queue.put({
-     #   'timestamp': timestamp,
-      #  'trade amount': trade_amount
-    #})
     
     # Update LCD display
     display_message(f"Bat:{battery_soc*100:.0f}% Gen:{solar_power:.0f}W")
@@ -230,8 +234,8 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     update_data_2 = {
         'battery_charge': battery_soc,
         'trade_amount': trade_amount,
-        'buy_grid_price':buy_grid_price,
-        'peer_price':peer_price,
+        'buy_grid_price': buy_grid_price,
+        'peer_price': peer_price,
         'df': df_json 
     }
     make_api_call(f'http://{PEER_IP}:5000/update_trade_data', update_data_2)

@@ -2,6 +2,7 @@
 from flask import Flask, request, jsonify
 import logging
 import time
+from threading import Event
 import threading
 from config import PEER_IP, LOCAL_IP
 import pandas as pd
@@ -26,6 +27,37 @@ energy_data = {
 }
 
 df = pd.DataFrame()
+
+
+current_timestamp = None
+simulation_ended = Event()
+
+@app.route('/sync', methods=['POST'])
+def sync():
+    global current_timestamp
+    data = request.json
+    current_timestamp = data['timestamp']
+    
+    if current_timestamp == 'END':
+        simulation_ended.set()
+        logging.info("Received END signal. Simulation completed.")
+    else:
+        logging.info(f"Synced to timestamp: {current_timestamp}")
+    
+    return jsonify({"status": "synced"})
+
+@app.route('/current_timestamp', methods=['GET'])
+def get_current_timestamp():
+    return jsonify({"timestamp": current_timestamp})
+
+@app.route('/simulation_status', methods=['GET'])
+def get_simulation_status():
+    if simulation_ended.is_set():
+        return jsonify({"status": "completed"})
+    elif current_timestamp:
+        return jsonify({"status": "in_progress", "current_timestamp": current_timestamp})
+    else:
+        return jsonify({"status": "not_started"})
 
 @app.route('/get_dataframe', methods=['GET'])
 def get_dataframe():
