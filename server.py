@@ -165,7 +165,7 @@ def update_dataframe():
         timestamp = pd.Timestamp(data['timestamp'])
         if 'Enable' not in new_df.columns:
             new_df['Enable'] = 0
-        df = df.append(new_df.loc[timestamp]).drop_duplicates(subset='timestamp').reset_index(drop=True)
+        df = pd.concat([df, new_df.loc[[timestamp]]]).drop_duplicates(subset='timestamp').reset_index(drop=True)
         logging.info(f"DataFrame updated successfully for timestamp {timestamp}")
         return jsonify({"status": "success"}), 200
     except Exception as e:

@@ -125,16 +125,17 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     make_api_call(f'http://{PEER_IP}:5000/update_peer_data', update_data_1)
     
     retry_count = 0
+    max_retries = 3
     
-    while True:
+    while retry_count < max_retries:
         logging.info(f"Retry attempt {retry_count + 1}")
         # Fetch DataFrame from the server
         df_peer = fetch_dataframe()
     
-        if df_peer is not None and timestamp in df_peer.index:
+        if df_peer is not None and not df_peer.empty and timestamp in df_peer.index:
             if 'Enable' in df_peer.columns:
                 # Check the Enable value for the current timestamp
-                enable = df.loc[timestamp, 'Enable']
+                enable = df_peer.loc[timestamp, 'Enable']
         
                 # Start the trading for consumer after the prosumer provides trade amount
                 if enable == 1:
@@ -167,11 +168,11 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
             else:
                 logging.error("Failed to get peer data for trading or timestamp not found.")
 
-        retry_count += 1
-        if retry_count >= 3:
-            logging.error("Max retries reached, skipping this timestamp.")
-            break
-        time.sleep(1)
+            retry_count += 1
+            if retry_count >= max_retries:
+                logging.error("Max retries reached, skipping this timestamp.")
+                break
+            time.sleep(1)
 
         # Update LCD display
         display_message(f"Dem:{demand*1000:.0f}Wh Tra:{trade_amount*1000:.0f}Wh") # unit
