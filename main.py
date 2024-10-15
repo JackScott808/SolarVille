@@ -87,21 +87,15 @@ def start_simulation_local(args):
 # reading the dataframe
 def fetch_dataframe():
     try:
-        logging.info(f"Attempting to fetch DataFrame from peer {PEER_IP}...")
-        # Replace the URL with the Flask endpoint where the DataFrame is hosted
-        response = requests.get(f'http://{LOCAL_IP}:5000/get_dataframe', timeout=3)
+        response = requests.get(f'http://{PEER_IP}:5000/get_dataframe', timeout=3)
         if response.status_code == 200:
-            # Convert the CSV data back to DataFrame
-            df = pd.read_csv(StringIO(response.text))
-            return df
+            return pd.read_json(response.text, orient='split')
         else:
-            logging.error("Failed to fetch DataFrame from peer. Status code: " + str(response.status_code))
+            logging.error(f"Failed to fetch DataFrame. Status code: {response.status_code}")
             return None
-    except requests.Timeout:
-        logging.error("Request timed out while fetching DataFrame.")
-        return None
     except Exception as e:
         logging.error(f"Error fetching DataFrame: {e}")
+        return None
         return None
     
 def process_trading_and_lcd(df, timestamp, current_data, queue):

@@ -142,19 +142,31 @@ def get_data():
 def get_peer_data():
     return jsonify(peer_data)
 
+# Modify the get_dataframe route to return JSON instead of CSV
 @app.route('/get_dataframe', methods=['GET'])
 def get_dataframe():
+    global df
     try:
-        # Check if the DataFrame is defined
         if df.empty:
             logging.warning("DataFrame is empty. Returning an empty DataFrame.")
-            return df.to_csv(index=False), 200
-        
-        # Convert DataFrame to CSV format and return it
-        csv_data = df.to_csv(index=False)
-        return csv_data, 200
+            return df.to_json(orient='split'), 200
+        return df.to_json(orient='split'), 200
     except Exception as e:
         logging.error(f"Error serving DataFrame: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Add a route to update the DataFrame
+@app.route('/update_dataframe', methods=['POST'])
+def update_dataframe():
+    global df
+    try:
+        new_data = request.json
+        new_df = pd.read_json(new_data, orient='split')
+        df = pd.concat([df, new_df]).drop_duplicates().reset_index(drop=True)
+        logging.info("DataFrame updated successfully")
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        logging.error(f"Error updating DataFrame: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/wait_for_start', methods=['GET'])
