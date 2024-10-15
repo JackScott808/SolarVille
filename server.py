@@ -41,6 +41,8 @@ def sync():
     if current_timestamp == 'END':
         simulation_ended.set()
         logging.info("Received END signal. Simulation completed.")
+    elif current_timestamp == 'START':
+        logging.info("Received START signal. Simulation beginning.")
     else:
         logging.info(f"Synced to timestamp: {current_timestamp}")
     
@@ -54,6 +56,8 @@ def get_current_timestamp():
 def get_simulation_status():
     if simulation_ended.is_set():
         return jsonify({"status": "completed"})
+    elif current_timestamp == 'START':
+        return jsonify({"status": "starting"})
     elif current_timestamp:
         return jsonify({"status": "in_progress", "current_timestamp": current_timestamp})
     else:

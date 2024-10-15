@@ -44,6 +44,7 @@ def start_simulation_local(args):
     
     global trade_amount
     global battery_soc
+    global current_timestamp
     
     # Initialize the DataFrame with the loaded data
     df['generation'] = 0.0
@@ -64,37 +65,50 @@ def start_simulation_local(args):
 
     ready_event.wait()  # Wait for the plot to be initialized
 
+    # Signal that the simulation is starting
+    current_timestamp = 'START'
+    requests.post(f'http://{PEER_IP}:5000/sync', json={'timestamp': 'START'})
+
     try:
-        while True:
-            response = requests.get(f'http://{PEER_IP}:5000/simulation_status')
-            if response.status_code == 200:
-                status = response.json()
-                if status['status'] == 'completed':
-                    logging.info("Simulation completed.")
-                    break
-                elif status['status'] == 'in_progress':
-                    timestamp = pd.Timestamp(status['current_timestamp'])
-                    if timestamp in df.index:
-                        current_data = df.loc[timestamp]
-                        df = process_trading_and_lcd(df, timestamp, current_data, queue)
-                        logging.info(f"Processed timestamp: {timestamp}")
-                    else:
-                        logging.warning(f"Timestamp {timestamp} not found in local DataFrame")
-                else:
-                    logging.info("Waiting for simulation to start...")
+        for timestamp in df.index:
+            current_time = time.time()
+            elapsed_time = current_time - start_time
+            simulated_elapsed_time = elapsed_time * simulation_speed
+
+            if simulated_elapsed_time >= total_simulation_time:
+                logging.info("Simulation completed.")
+                break
+
+            current_data = df.loc[timestamp]
+
+            logging.info(f"Processing timestamp {timestamp}")
+            logging.info(f"Elapsed time: {elapsed_time:.2f}, Current data: {current_data}")
+
+            if not current_data.empty:
+                df = process_trading_and_lcd(df, timestamp, current_data, queue)
+                logging.info("Processed data and LCD update")
             else:
-                logging.error("Failed to get simulation status from prosumer")
-            
-            time.sleep(1)  # Adjust as needed
+                logging.warning("Empty current_data, skipping processing")
+
+            # Update current_timestamp and sync with consumer
+            current_timestamp = str(timestamp)
+            requests.post(f'http://{PEER_IP}:5000/sync', json={'timestamp': current_timestamp})
+
+            # Calculate sleep time to maintain simulation speed
+            sleep_time = max(0, (30 * 60 / simulation_speed) - (time.time() - current_time))
+            time.sleep(sleep_time)
 
     except KeyboardInterrupt:
         logging.info("Simulation interrupted.")
+    except Exception as e:
+        logging.error(f"An error occurred during simulation: {e}")
     finally:
         queue.put("done")
         plot_process.join()
         logging.info("Simulation ended.")
 
     # Send final sync to indicate simulation completion
+    current_timestamp = 'END'
     requests.post(f'http://{PEER_IP}:5000/sync', json={'timestamp': 'END'})
 
 def process_trading_and_lcd(df, timestamp, current_data, queue):
