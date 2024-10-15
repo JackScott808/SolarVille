@@ -1,3 +1,4 @@
+# Prosumer
 from flask import Flask, request, jsonify
 import logging
 import time
@@ -23,6 +24,20 @@ energy_data = {
     "generation": 0,
     "battery_charge": 0,
 }
+
+df = pd.DataFrame()
+
+@app.route('/get_dataframe', methods=['GET'])
+def get_dataframe():
+    global df
+    try:
+        if df.empty:
+            logging.warning("Datafram is empty. Returning empty DataFrame.")
+            return df.to_json(orient='split'), 200
+        return df.to_json(orient='split'), 200
+    except Exception as e:
+        logging.error(f"Error serving DataFrame: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/ready', methods=['POST'])
 def ready():
@@ -58,12 +73,14 @@ def update_peer_data():
 
 @app.route('/update_trade_data', methods=['POST'])
 def update_trade_data():
+    global df
     data = request.json
     peer_ip = request.remote_addr
     if peer_ip not in peer_data:
         peer_data[peer_ip] = {}
     peer_data[peer_ip].update(data)
     
+<<<<<<< HEAD
     df_json = data.get('df')
     if df_json:
         try:
@@ -71,6 +88,13 @@ def update_trade_data():
             logging.info(f"Received updated DataFrame with Enable column updated.")
         except ValueError as e:
             logging.error(f"Error parsing DataFrame JSON: {e}")
+=======
+    # Update the global DataFrame
+    df_json = data.get('df')
+    if df_json:
+        df = pd.read_json(df_json, orient='split')
+        logging.info(f"Updated global DataFrame with new data.")
+>>>>>>> df08fb9d7c080d4b8c3e147dfbe19fd846a50c59
         
     trade_amount = data.get('trade_amount', 'N/A')
     buy_grid_price = data.get('buy_grid_price', 'N/A')
