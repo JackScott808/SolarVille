@@ -47,35 +47,28 @@ def start_simulation_local(args):
 
     logging.info("Dataframe for balance, currency and battery charge is created.")
     
-
     try:
         while True:
-            current_time = time.time()
-            elapsed_time = current_time - start_time
-            
-            simulated_elapsed_time = elapsed_time * simulation_speed
-            
-            if simulated_elapsed_time >= total_simulation_time:
-                logging.info("Simulation completed.")
-                break
-            
-            timestamp_index = int(simulated_elapsed_time / (30 * 60))  # 30-minute intervals
-            if timestamp_index >= len(df.index):
-                logging.info("Reached end of data. Simulation completed.")
-                break
-            
-            timestamp = df.index[timestamp_index]
-            current_data = df.loc[timestamp]
-            
-            logging.info(f"Elapsed time: {elapsed_time}, Current data: {current_data}")
-
-            if not current_data.empty:
-                df = process_trading_and_lcd(df, timestamp, current_data, queue)
-                logging.info("Processed trading and LCD update")
+            response = requests.get(f'http://{PEER_IP}:5000/simulation_status')
+            if response.status_code == 200:
+                status = response.json()
+                if status['status'] == 'completed':
+                    logging.info("Simulation completed.")
+                    break
+                elif status['status'] == 'in_progress':
+                    timestamp = pd.Timestamp(status['current_timestamp'])
+                    if timestamp in df.index:
+                        current_data = df.loc[timestamp]
+                        df = process_trading_and_lcd(df, timestamp, current_data, queue)
+                        logging.info(f"Processed timestamp: {timestamp}")
+                    else:
+                        logging.warning(f"Timestamp {timestamp} not found in local DataFrame")
+                else:
+                    logging.info("Waiting for simulation to start...")
             else:
-                logging.warning("Empty current_data, skipping processing")
-
-            time.sleep(1)  # Small sleep to prevent CPU overuse
+                logging.error("Failed to get simulation status from prosumer")
+            
+            time.sleep(1)  # Adjust as needed
 
     except KeyboardInterrupt:
         logging.info("Simulation interrupted.")
@@ -89,13 +82,12 @@ def fetch_dataframe():
     try:
         response = requests.get(f'http://{PEER_IP}:5000/get_dataframe', timeout=3)
         if response.status_code == 200:
-            return pd.read_json(response.text, orient='split')
+            return pd.read_json(StringIO(response.text), orient='split')
         else:
             logging.error(f"Failed to fetch DataFrame. Status code: {response.status_code}")
             return None
     except Exception as e:
         logging.error(f"Error fetching DataFrame: {e}")
-        return None
         return None
     
 def process_trading_and_lcd(df, timestamp, current_data, queue):
@@ -129,10 +121,15 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     
     while retry_count < max_retries:
         logging.info(f"Retry attempt {retry_count + 1}")
-        # Fetch DataFrame from the server
         df_peer = fetch_dataframe()
     
-        if df_peer is not None and not df_peer.empty and timestamp in df_peer.index:
+        if df_peer is None or df_peer.empty:
+            logging.warning("Received empty DataFrame from prosumer")
+            retry_count += 1
+            time.sleep(1)
+            continue
+
+        if timestamp in df_peer.index:
             if 'Enable' in df_peer.columns:
                 # Check the Enable value for the current timestamp
                 enable = df_peer.loc[timestamp, 'Enable']
@@ -165,14 +162,17 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
                         logging.error("Waiting for prosumer to enable trading.")
                 else:
                     logging.info("'Enable' column not found in peer DataFrame.")    
+                
             else:
-                logging.error("Failed to get peer data for trading or timestamp not found.")
+                logging.error("'Enable' column not found in peer DataFrame")
+        else:
+            logging.error(f"Timestamp {timestamp} not found in peer DataFrame")
 
-            retry_count += 1
-            if retry_count >= max_retries:
-                logging.error("Max retries reached, skipping this timestamp.")
-                break
-            time.sleep(1)
+        retry_count += 1
+        if retry_count >= max_retries:
+            logging.error("Max retries reached, skipping this timestamp")
+            break
+        time.sleep(1)
 
         # Update LCD display
         display_message(f"Dem:{demand*1000:.0f}Wh Tra:{trade_amount*1000:.0f}Wh") # unit
