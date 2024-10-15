@@ -228,7 +228,8 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
 
     # Convert the DataFrame to JSON format
     df_json = df.to_json(orient='split')
-
+    requests.post(f'http://{PEER_IP}:5000/update_dataframe', json=df_json)
+    
     # Send updates to Flask server
     update_data_2 = {
         'battery_charge': battery_soc,
