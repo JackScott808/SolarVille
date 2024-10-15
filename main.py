@@ -129,44 +129,49 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     while True:
         logging.info(f"Retry attempt {retry_count + 1}")
         # Fetch DataFrame from the server
-        df = fetch_dataframe()
+        df_peer = fetch_dataframe()
     
-        if df is not None:
-            # Check the Enable value for the current timestamp
-            enable = df.loc[timestamp, 'Enable']
+        if df_peer is not None and timestamp in df_peer.index:
+            if 'Enable' in df_peer.columns:
+                # Check the Enable value for the current timestamp
+                enable = df.loc[timestamp, 'Enable']
         
-            # Start the trading for consumer after the prosumer provides trade amount
-            if enable == 1:
-                peer_data_response = requests.get(f'http://{LOCAL_IP}:5000/get_peer_data')
-                if peer_data_response.status_code == 200:
-                    peer_data = peer_data_response.json()
-                    
-                    peer_price = peer_data.get('peer_price')
-                    buy_grid_price = peer_data.get('buy_grid_price')
-                    trade_amount = peer_data.get('trade_amount', 0)# unit: kWh
-
-                    if trade_amount is None:
-                        logging.warning(f"No trading data available for peer {PEER_IP}")
-                    
-                    # Perform trading (now in kilo Watt-hours) 
-                    buy_from_grid = abs(balance) - trade_amount
-                    df.loc[timestamp, ['balance', 'currency', 'trade_amount']] = [
-                        df.loc[timestamp, 'balance'] - balance,  # update balance
-                        df.loc[timestamp, 'currency'] - trade_amount * peer_price - buy_from_grid * buy_grid_price,  # update currency
-                        trade_amount  # update trade_amountge
-                    ]
+                # Start the trading for consumer after the prosumer provides trade amount
+                if enable == 1:
+                    peer_data_response = requests.get(f'http://{LOCAL_IP}:5000/get_peer_data')
+                    if peer_data_response.status_code == 200:
+                        peer_data = peer_data_response.json()
                         
-                    logging.info(f"Bought {trade_amount*1000:.2f} Wh from peer at {peer_price:.2f} ￡/kWh" # unit
-                                f"and the remaining {buy_from_grid*1000:.2f} Wh to the grid at {buy_grid_price:.2f} ￡/kWh") # unit
-                    break
+                        peer_price = peer_data.get('peer_price')
+                        buy_grid_price = peer_data.get('buy_grid_price')
+                        trade_amount = peer_data.get('trade_amount', 0)# unit: kWh
+
+                        if trade_amount is None:
+                            logging.warning(f"No trading data available for peer {PEER_IP}")
+                        
+                        # Perform trading (now in kilo Watt-hours) 
+                        buy_from_grid = abs(balance) - trade_amount
+                        df.loc[timestamp, ['balance', 'currency', 'trade_amount']] = [
+                            df.loc[timestamp, 'balance'] - balance,  # update balance
+                            df.loc[timestamp, 'currency'] - trade_amount * peer_price - buy_from_grid * buy_grid_price,  # update currency
+                            trade_amount  # update trade_amountge
+                        ]
+                            
+                        logging.info(f"Bought {trade_amount*1000:.2f} Wh from peer at {peer_price:.2f} ￡/kWh" # unit
+                                    f"and the remaining {buy_from_grid*1000:.2f} Wh to the grid at {buy_grid_price:.2f} ￡/kWh") # unit
+                        break
+                    else:
+                        logging.error("Waiting for prosumer to enable trading.")
                 else:
-                    logging.error("Failed to get peer data for trading.")
+                    logging.info("'Enable' column not found in peer DataFrame.")    
             else:
-                logging.info("Disabled, wait for trading amount. Retrying ")    
-        else:
-            logging.error("Failed to get peer data for trading")
+                logging.error("Failed to get peer data for trading or timestamp not found.")
 
         retry_count += 1
+        if retry_count >= 3:
+            logging.error("Max retries reached, skipping this timestamp.")
+            break
+        time.sleep(1)
 
         # Update LCD display
         display_message(f"Dem:{demand*1000:.0f}Wh Tra:{trade_amount*1000:.0f}Wh") # unit

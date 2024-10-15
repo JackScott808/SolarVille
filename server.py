@@ -160,10 +160,13 @@ def get_dataframe():
 def update_dataframe():
     global df
     try:
-        new_data = request.json
-        new_df = pd.read_json(new_data, orient='split')
-        df = pd.concat([df, new_df]).drop_duplicates().reset_index(drop=True)
-        logging.info("DataFrame updated successfully")
+        data = request.json
+        new_df = pd.read_json(data['df'], orient='split')
+        timestamp = pd.Timestamp(data['timestamp'])
+        if 'Enable' not in new_df.columns:
+            new_df['Enable'] = 0
+        df = df.append(new_df.loc[timestamp]).drop_duplicates(subset='timestamp').reset_index(drop=True)
+        logging.info(f"DataFrame updated successfully for timestamp {timestamp}")
         return jsonify({"status": "success"}), 200
     except Exception as e:
         logging.error(f"Error updating DataFrame: {e}")
