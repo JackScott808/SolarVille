@@ -20,7 +20,8 @@ SOLAR_SCALE_FACTOR = 4000  # Adjust this value as needed
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def start_simulation_local(args):
-
+    start_time = time.time()
+    logging.info("Starting simulation...")
     df = load_data(args.file_path, args.household, args.start_date, args.timescale)
     if df.empty:
         logging.error("No data loaded. Exiting simulation.")
@@ -46,7 +47,6 @@ def start_simulation_local(args):
 
     logging.info("Dataframe for balance, currency and battery charge is created.")
     
-    start_time = time.time()
 
     try:
         while True:
@@ -67,8 +67,13 @@ def start_simulation_local(args):
             timestamp = df.index[timestamp_index]
             current_data = df.loc[timestamp]
             
+            logging.info(f"Elapsed time: {elapsed_time}, Current data: {current_data}")
+
             if not current_data.empty:
                 df = process_trading_and_lcd(df, timestamp, current_data, queue)
+                logging.info("Processed trading and LCD update")
+            else:
+                logging.warning("Empty current_data, skipping processing")
 
             time.sleep(1)  # Small sleep to prevent CPU overuse
 
@@ -118,10 +123,10 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     print(demand, balance)
     # Send updates to Flask server
     update_data_1 = {
-        #'demand': demand,
-        #'balance': balance
-        'demand': 1,
-        'balance': -1
+        'demand': demand,
+        'balance': balance
+        # 'demand': 1,
+        # 'balance': -1
     }
     make_api_call(f'http://{PEER_IP}:5000/update_peer_data', update_data_1)
     
