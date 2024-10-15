@@ -26,27 +26,17 @@ def start_simulation_local(args):
     if df.empty:
         logging.error("No data loaded. Exiting simulation.")
         return
-    
-    
-    df['balance'] = 0.0  # Initialize balance column
-    df['currency'] = 0  # Initialize the currency column to 0
-    
+
     end_date = calculate_end_date(args.start_date, args.timescale)
-    total_simulation_time = (df.index[-1] - df.index[0]).total_seconds()
-    simulation_speed = 30 * 60 / 6  # 30 minutes of data in 6 seconds of simulation
-    logging.info(f"Data loaded in {time.time() - start_time:.2f} seconds")
-    
     queue = Queue()
     ready_event = Event()
+
     plot_process = Process(target=update_plot_same, args=(df, args.start_date, end_date, args.timescale, queue, ready_event))
     plot_process.start()
-    
-    # Wait for the plotting process to signal that it is ready
-    ready_event.wait()
-    logging.info("Plot initialized, starting simulation...")
 
-    logging.info("Dataframe for balance, currency and battery charge is created.")
-    
+    ready_event.wait()  # Wait for the plot to be initialized
+    logging.info("Plot initialized, waiting for simulation to start...")
+
     try:
         while True:
             response = requests.get(f'http://{PEER_IP}:5000/simulation_status')
@@ -63,8 +53,10 @@ def start_simulation_local(args):
                         logging.info(f"Processed timestamp: {timestamp}")
                     else:
                         logging.warning(f"Timestamp {timestamp} not found in local DataFrame")
-                else:
+                elif status['status'] == 'not_started':
                     logging.info("Waiting for simulation to start...")
+                else:
+                    logging.info(f"Unknown simulation status: {status['status']}")
             else:
                 logging.error("Failed to get simulation status from prosumer")
             
