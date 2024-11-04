@@ -1,3 +1,5 @@
+# Branch: consumerJack
+# File: solarMonitor.py
 import time
 import board # type: ignore
 import busio # type: ignore

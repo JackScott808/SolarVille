@@ -1,4 +1,5 @@
-# mock_batteryControl.py
+# Branch: consumerJack
+# File: mock_batteryControl.py
 def update_battery_charge(power_generated, power_demand):
     # Mock update logic
     battery_charge = min(1.0, max(0.0, (power_generated - power_demand) / 100.0))

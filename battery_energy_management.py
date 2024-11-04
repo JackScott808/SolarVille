@@ -1,3 +1,6 @@
+# Branch: consumerJack
+# File: battery_energy_management.py
+
 # Be aware that battery_soc is a percentage number between 0-1; when you represent it with extra %, multiply it by 100
 
 # Step 1: When generation is larger than demand
