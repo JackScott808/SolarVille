@@ -1,3 +1,5 @@
+# Branch: ProsumerJack
+# File: pricing.py
 def calculate_price(total_demand, total_supply, buy_grid_price, sell_grid_price):
     """
     Here is a suggestion for the implementation of the calculate_price function.
