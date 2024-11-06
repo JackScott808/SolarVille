@@ -56,9 +56,9 @@ class SimulationManager:
             solar_data = self.solar_monitor.get_readings()
             reading = ProsumerReading(
                 timestamp=timestamp,
-                demand=current_data['energy'],
+                demand=current_data['energy(kWh/hh)'],  # Fixed column name
                 generation=solar_data['solar_energy'],
-                balance=solar_data['solar_energy'] - current_data['energy'],
+                balance=solar_data['solar_energy'] - current_data['energy(kWh/hh)'],  # Fixed column name
                 battery_soc=self.battery_manager.soc,
                 solar_power=solar_data['solar_power'],
                 battery_voltage=solar_data['battery_voltage']
@@ -66,8 +66,8 @@ class SimulationManager:
         else:
             reading = EnergyReading(
                 timestamp=timestamp,
-                demand=current_data['energy'],
-                balance=-current_data['energy']
+                demand=current_data['energy(kWh/hh)'],  # Fixed column name
+                balance=-current_data['energy(kWh/hh)']  # Fixed column name
             )
         return reading
 

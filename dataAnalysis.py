@@ -12,8 +12,7 @@ import logging
 import time
 import os  # Make sure this is included
 from config import SIMULATION_SPEEDUP
-from multiprocessing import Process, Queue
-from multiprocessing import Event
+from multiprocessing import Process, Queue, Event as MPEvent
 from queue import Empty
 
 # Configure logging
@@ -243,8 +242,18 @@ def setup_plot_formatting(ax, interval: str):
     plt.tight_layout()
 
 def update_plot_same(df: pd.DataFrame, start_date: str, end_date: str, 
-                    interval: str, queue: Queue, ready_event: Event):
-    """Create and update real-time plot with combined lines."""
+                    interval: str, queue: Queue, ready_event: MPEvent) -> None:
+    """
+    Create and update real-time plot with combined lines.
+    
+    Args:
+        df: DataFrame containing the energy data
+        start_date: Start date of the simulation
+        end_date: End date of the simulation
+        interval: Time interval for the x-axis
+        queue: Multiprocessing queue for data transfer
+        ready_event: Multiprocessing event for synchronization
+    """
     try:
         logging.info("Initializing plot...")
         fig, ax = plt.subplots(figsize=(15, 6))
