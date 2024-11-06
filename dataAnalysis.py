@@ -5,12 +5,13 @@ import pandas as pd # type: ignore
 import numpy as np # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 import matplotlib.dates as mdates # type: ignore
+from matplotlib import ticker
 from datetime import datetime, timedelta
 import calendar
 import logging
 import time
+import os  # Make sure this is included
 from config import SIMULATION_SPEEDUP
-import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -237,6 +238,7 @@ def calculate_sleep_time(current_timestamp: datetime, start_time: float) -> floa
 
 def setup_plot_formatting(ax, interval: str):
     """Set up plot formatting based on time interval."""
+    
     interval_formats = {
         'd': (mdates.HourLocator(interval=1), '%H:%M'),
         'w': (mdates.DayLocator(interval=1), '%Y-%m-%d'),
@@ -244,7 +246,7 @@ def setup_plot_formatting(ax, interval: str):
         'y': (mdates.MonthLocator(interval=1), '%Y-%m')
     }
     
-    locator, format_str = interval_formats.get(interval, (mdates.AutoLocator(), '%Y-%m-%d'))
+    locator, format_str = interval_formats.get(interval, (ticker.AutoLocator(), '%Y-%m-%d'))
     
     ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(mdates.DateFormatter(format_str))
