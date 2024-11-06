@@ -12,6 +12,9 @@ import logging
 import time
 import os  # Make sure this is included
 from config import SIMULATION_SPEEDUP
+from multiprocessing import Process, Queue
+from multiprocessing import Event
+from queue import Empty
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -240,7 +243,7 @@ def setup_plot_formatting(ax, interval: str):
     plt.tight_layout()
 
 def update_plot_same(df: pd.DataFrame, start_date: str, end_date: str, 
-                    interval: str, queue, ready_event):
+                    interval: str, queue: Queue, ready_event: Event):
     """Create and update real-time plot with combined lines."""
     try:
         logging.info("Initializing plot...")
@@ -295,7 +298,7 @@ def update_plot_same(df: pd.DataFrame, start_date: str, end_date: str,
                 plt.pause(0.01)
                 logging.debug(f"Updated plot with data at {timestamp}")
 
-            except queue.Empty:
+            except Empty:
                 logging.debug("No data received in the last second, continuing...")
                 plt.pause(0.01)  # Keep the plot responsive
                 continue
