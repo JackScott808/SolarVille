@@ -1,11 +1,8 @@
-# Branch: consumerJack
-# File: server.py
-
+# server.py
 from flask import Flask, request, jsonify
 import logging
 from threading import Event
-from config import PEER_IP
-from energy_types import TradeData, EnergyReading
+import os
 
 app = Flask(__name__)
 
@@ -14,16 +11,21 @@ peer_data = {}
 current_timestamp = None
 simulation_ended = Event()
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Simple health check endpoint"""
+    return jsonify({"status": "healthy"})
+
 @app.route('/get_peer_data', methods=['GET'])
 def get_peer_data():
     """
     Endpoint for getting peer's current status
-    Returns: {
-        'demand': float,
-        'balance': float,
-        'generation': float,  # prosumer only
-        'battery_soc': float  # prosumer only
-    }
     """
     try:
         return jsonify(peer_data)
@@ -35,18 +37,11 @@ def get_peer_data():
 def update_peer_data():
     """
     Endpoint for receiving peer's current status
-    Expects: {
-        'demand': float,
-        'balance': float,
-        'generation': float,  # prosumer only
-        'battery_soc': float  # prosumer only
-    }
     """
     try:
         data = request.json
         peer_ip = request.remote_addr
         
-        # Update stored peer data
         if peer_ip not in peer_data:
             peer_data[peer_ip] = {}
         peer_data[peer_ip].update(data)
@@ -64,29 +59,19 @@ def update_peer_data():
 def update_trade_data():
     """
     Endpoint for receiving trade information
-    Expects: {
-        'trade_amount': float,
-        'price': float,
-        'grid_buy_price': float,
-        'grid_sell_price': float
-    }
     """
     try:
         data = request.json
         peer_ip = request.remote_addr
         
-        # Update stored trade data
         if peer_ip not in peer_data:
             peer_data[peer_ip] = {}
         peer_data[peer_ip].update(data)
         
-        trade_amount = data.get('trade_amount', 'N/A')
-        price = data.get('price', 'N/A')
-        
         logging.info(
             f"Trade data from {peer_ip}: "
-            f"Amount: {trade_amount} kWh, "
-            f"Price: £{price}/kWh"
+            f"Amount: {data.get('trade_amount', 'N/A')} kWh, "
+            f"Price: £{data.get('price', 'N/A')}/kWh"
         )
         
         return jsonify({"status": "updated"})
@@ -94,48 +79,31 @@ def update_trade_data():
         logging.error(f"Error updating trade data: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/simulation_status', methods=['GET'])
-def get_simulation_status():
-    """
-    Endpoint for checking simulation status
-    Returns: {
-        'status': 'completed'|'starting'|'in_progress'|'not_started',
-        'current_timestamp': timestamp if in_progress
-    }
-    """
-    if simulation_ended.is_set():
-        return jsonify({"status": "completed"})
-    elif current_timestamp == 'START':
-        return jsonify({"status": "starting"})
-    elif current_timestamp:
-        return jsonify({
-            "status": "in_progress", 
-            "current_timestamp": current_timestamp
-        })
-    else:
-        return jsonify({"status": "not_started"})
-
 @app.route('/sync', methods=['POST'])
 def sync():
     """
     Endpoint for synchronizing timestamps between peers
-    Expects: {
-        'timestamp': string
-    }
     """
     global current_timestamp
-    data = request.json
-    current_timestamp = data['timestamp']
-    
-    if current_timestamp == 'END':
-        simulation_ended.set()
-        logging.info("Received END signal. Simulation completed.")
-    elif current_timestamp == 'START':
-        logging.info("Received START signal. Simulation beginning.")
-    else:
-        logging.info(f"Synced to timestamp: {current_timestamp}")
-    
-    return jsonify({"status": "synced"})
+    try:
+        data = request.json
+        current_timestamp = data['timestamp']
+        
+        if current_timestamp == 'END':
+            simulation_ended.set()
+            logging.info("Received END signal. Simulation completed.")
+        elif current_timestamp == 'START':
+            logging.info("Received START signal. Simulation beginning.")
+        else:
+            logging.info(f"Synced to timestamp: {current_timestamp}")
+        
+        return jsonify({"status": "synced"})
+    except Exception as e:
+        logging.error(f"Error syncing timestamp: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    # Get port from environment variable or use default
+    port = int(os.environ.get('FLASK_PORT', 5000))
+    logging.info(f"Starting server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
