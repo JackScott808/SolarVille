@@ -8,6 +8,7 @@ DATA_FILE="/home/pi/block_0.csv"
 START_DATE="2012-10-24"
 TIMESCALE="d"
 PROSUMER_HOUSEHOLD="MAC000246"  # Default prosumer household ID
+PORT=5000  # Default port
 
 # Function to show usage
 show_usage() {
@@ -21,12 +22,34 @@ show_usage() {
     echo "  $0 --file /home/pi/block_0.csv --date 2012-10-24 --scale d --household MAC000246"
 }
 
-# Function to cleanup background processes on script exit
+# Function to check if port is in use
+check_port() {
+    local port=$1
+    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null ; then
+        return 0  # Port is in use
+    else
+        return 1  # Port is free
+    fi
+}
+
+# Function to kill any existing Flask process on port 5000
+cleanup_existing() {
+    echo "Checking for existing Flask server..."
+    local pid=$(lsof -ti:$PORT)
+    if [ ! -z "$pid" ]; then
+        echo "Found existing server on port $PORT (PID: $pid)"
+        echo "Stopping existing server..."
+        kill -9 $pid 2>/dev/null
+        sleep 1
+    fi
+}
+
+# Function to cleanup our processes on script exit
 cleanup() {
     echo "Cleaning up..."
     if [ -f "server.pid" ]; then
         SERVER_PID=$(cat server.pid)
-        kill $SERVER_PID 2>/dev/null
+        kill -9 $SERVER_PID 2>/dev/null
         rm server.pid
     fi
 }
@@ -61,22 +84,38 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Clean up any existing Flask server
+cleanup_existing
+
 echo "Starting server..."
 # Start the server in the background and save its PID
-python server.py &
+FLASK_PORT=$PORT python server.py &
 SERVER_PID=$!
 echo $SERVER_PID > server.pid
 
-# Wait a moment for the server to start
-sleep 2
+# Wait for server to start and verify it's running
+max_attempts=10
+attempt=1
+while [ $attempt -le $max_attempts ]; do
+    if curl -s http://localhost:$PORT/health >/dev/null; then
+        echo "Server started successfully (PID: $SERVER_PID)"
+        break
+    fi
+    
+    if ! kill -0 $SERVER_PID 2>/dev/null; then
+        echo "Server failed to start"
+        exit 1
+    fi
+    
+    echo "Waiting for server to start (attempt $attempt/$max_attempts)..."
+    sleep 1
+    attempt=$((attempt + 1))
+done
 
-# Check if server started successfully
-if ! kill -0 $SERVER_PID 2>/dev/null; then
-    echo "Failed to start server"
+if [ $attempt -gt $max_attempts ]; then
+    echo "Server failed to start after $max_attempts attempts"
     exit 1
 fi
-
-echo "Server started successfully (PID: $SERVER_PID)"
 
 echo "Starting Prosumer simulation..."
 echo "File path: $DATA_FILE"
