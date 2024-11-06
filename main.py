@@ -2,9 +2,8 @@
 # File: main.py
 
 from energy_types import ProsumerReading, EnergyReading
-from hardware_manager import SolarMonitor, BatteryManager
-from trading_manager import TradingManager
 from visualisation_manager import VisualisationManager
+from trading_manager import TradingManager
 from trading_integration import TradingIntegration
 from lcd_manager import LCDManager
 from dataAnalysis import load_data, calculate_sleep_time
@@ -37,11 +36,6 @@ class SimulationManager:
         self.lcd_manager = LCDManager()
         self.trading_integration = TradingIntegration()
         
-        # Initialize prosumer-specific components
-        if is_prosumer:
-            self.solar_monitor = SolarMonitor()
-            self.battery_manager = BatteryManager()
-        
         self.start_time = None
         self.simulation_active = False
 
@@ -53,23 +47,12 @@ class SimulationManager:
             timestamp: Current timestamp
             current_data: Current row of data
         """
-        if self.is_prosumer:
-            solar_data = self.solar_monitor.get_readings()
-            reading = ProsumerReading(
-                timestamp=timestamp,
-                demand=current_data['energy'],
-                generation=solar_data['solar_energy'],
-                balance=solar_data['solar_energy'] - current_data['energy'],
-                battery_soc=self.battery_manager.soc,
-                solar_power=solar_data['solar_power'],
-                battery_voltage=solar_data['battery_voltage']
-            )
-        else:
-            reading = EnergyReading(
-                timestamp=timestamp,
-                demand=current_data['energy'],
-                balance=-current_data['energy']
-            )
+        # For consumer, we only need basic energy reading
+        reading = EnergyReading(
+            timestamp=timestamp,
+            demand=current_data['energy(kWh/hh)'],  # Using correct column name
+            balance=-current_data['energy(kWh/hh)']  # Negative as consumer only uses energy
+        )
         return reading
 
     def _handle_trade(self, reading, trade_result):
@@ -95,14 +78,10 @@ class SimulationManager:
             )
             
             # Send trade data to peer
-            self.trading_integration.update_trade_data(trade_result)
-            
-            # Update battery if prosumer
-            if self.is_prosumer:
-                if trade_result.amount > 0:  # Selling energy
-                    self.battery_manager.discharge(trade_result.amount)
-                else:  # Buying energy
-                    self.battery_manager.charge(-trade_result.amount)
+            try:
+                self.trading_integration.update_trade_data(trade_result)
+            except Exception as e:
+                logging.debug(f"Failed to update trade data (normal if running standalone): {e}")
 
     def _update_displays(self, reading):
         """
@@ -112,14 +91,7 @@ class SimulationManager:
             reading: Current energy reading
         """
         # Update LCD with current status
-        if self.is_prosumer:
-            self.lcd_manager.display_energy_status(
-                reading.demand,
-                reading.generation,
-                reading.battery_soc * 100
-            )
-        else:
-            self.lcd_manager.display_energy_status(reading.demand)
+        self.lcd_manager.display_energy_status(reading.demand)
         
         # Update visualization
         self.vis_manager.update(reading)
@@ -130,6 +102,7 @@ class SimulationManager:
         
         try:
             # Load data
+            logging.info("Loading data from file...")
             df = load_data(
                 self.args.file_path,
                 self.args.household,
@@ -141,46 +114,73 @@ class SimulationManager:
                 logging.error("No data loaded. Exiting simulation.")
                 return
             
+            logging.info(f"Successfully loaded {len(df)} rows of data")
+            
             # Start visualization
+            logging.info("Starting visualization...")
             self.vis_manager.start(df)
             
             # Record start time
             self.start_time = time.time()
             self.simulation_active = True
             
-            # Signal simulation start
-            self.trading_integration.sync_timestamp('START')
+            # Signal simulation start - don't stop if this fails
+            try:
+                self.trading_integration.sync_timestamp('START')
+            except Exception as e:
+                logging.debug(f"Failed to signal start (normal if running standalone): {e}")
             
             try:
+                logging.info("Beginning main simulation loop...")
                 for timestamp in df.index:
                     if not self.simulation_active:
                         break
                     
-                    current_data = df.loc[timestamp]
+                    try:
+                        logging.debug(f"Processing timestamp: {timestamp}")
+                        current_data = df.loc[timestamp]
+                        
+                        # Create reading object
+                        reading = self._create_reading(timestamp, current_data)
+                        
+                        # Update peer with current status - continue if this fails
+                        try:
+                            self.trading_integration.update_peer_data(reading)
+                        except Exception as e:
+                            logging.debug(f"Failed to update peer (normal if running standalone): {e}")
+                        
+                        # Process trade
+                        try:
+                            trade_result = self.trading_manager.process_trade(reading)
+                            if trade_result:
+                                self._handle_trade(reading, trade_result)
+                        except Exception as e:
+                            logging.debug(f"Failed to process trade (normal if running standalone): {e}")
+                        
+                        # Update displays
+                        self._update_displays(reading)
+                        
+                        # Sync timestamp - continue if this fails
+                        try:
+                            self.trading_integration.sync_timestamp(str(timestamp))
+                        except Exception as e:
+                            logging.debug(f"Failed to sync timestamp (normal if running standalone): {e}")
+                        
+                        # Calculate and apply sleep time
+                        sleep_time = calculate_sleep_time(timestamp, self.start_time)
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
                     
-                    # Create reading object
-                    reading = self._create_reading(timestamp, current_data)
-                    
-                    # Update peer with current status
-                    self.trading_integration.update_peer_data(reading)
-                    
-                    # Process trade
-                    trade_result = self.trading_manager.process_trade(reading)
-                    self._handle_trade(reading, trade_result)
-                    
-                    # Update displays
-                    self._update_displays(reading)
-                    
-                    # Sync timestamp with peer
-                    self.trading_integration.sync_timestamp(str(timestamp))
-                    
-                    # Calculate and apply sleep time
-                    sleep_time = calculate_sleep_time(timestamp, self.start_time)
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
+                    except Exception as e:
+                        logging.error(f"Error processing timestamp {timestamp}: {e}")
+                        continue  # Continue with next timestamp even if this one fails
                 
-                # Signal simulation end
-                self.trading_integration.sync_timestamp('END')
+                logging.info("Main simulation loop completed")
+                # Signal simulation end - don't stop if this fails
+                try:
+                    self.trading_integration.sync_timestamp('END')
+                except Exception as e:
+                    logging.debug(f"Failed to signal end (normal if running standalone): {e}")
                 
             except KeyboardInterrupt:
                 logging.info("Simulation interrupted by user")
@@ -195,8 +195,3 @@ class SimulationManager:
             self.lcd_manager.clear()
             self.vis_manager.stop()
             logging.info("Simulation ended")
-
-if __name__ == "__main__":
-    args = parse_arguments()
-    simulation = SimulationManager(args, is_prosumer=False)  # False for consumer branch
-    simulation.start_simulation()

@@ -12,16 +12,17 @@ class TradingIntegration:
     
     def __init__(self, server_url: str = f"http://{PEER_IP}:5000"):
         self.server_url = server_url
-        self.session = requests.Session()  # Use session for better performance
+        self.session = requests.Session()
+        self.session.timeout = 2  # Set timeout to 2 seconds
 
     def get_peer_data(self) -> Optional[Dict]:
         """Get current peer status from server"""
         try:
-            response = self.session.get(f"{self.server_url}/get_peer_data")
+            response = self.session.get(f"{self.server_url}/get_peer_data", timeout=2)
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logging.error(f"Failed to get peer data: {e}")
+            logging.debug(f"Failed to get peer data (this is normal if running standalone): {e}")
             return None
 
     def update_peer_data(self, reading: EnergyReading) -> bool:
@@ -31,22 +32,16 @@ class TradingIntegration:
                 'demand': reading.demand,
                 'balance': reading.balance
             }
-            
-            # Add prosumer-specific data if available
-            if hasattr(reading, 'generation'):
-                data.update({
-                    'generation': reading.generation,
-                    'battery_soc': getattr(reading, 'battery_soc', None)
-                })
 
             response = self.session.post(
                 f"{self.server_url}/update_peer_data",
-                json=data
+                json=data,
+                timeout=2
             )
             response.raise_for_status()
             return True
         except Exception as e:
-            logging.error(f"Failed to update peer data: {e}")
+            logging.debug(f"Failed to update peer data (this is normal if running standalone): {e}")
             return False
 
     def update_trade_data(self, trade: TradeData) -> bool:
@@ -61,12 +56,13 @@ class TradingIntegration:
             
             response = self.session.post(
                 f"{self.server_url}/update_trade_data",
-                json=data
+                json=data,
+                timeout=2
             )
             response.raise_for_status()
             return True
         except Exception as e:
-            logging.error(f"Failed to update trade data: {e}")
+            logging.debug(f"Failed to update trade data (this is normal if running standalone): {e}")
             return False
 
     def sync_timestamp(self, timestamp: str) -> bool:
@@ -74,10 +70,11 @@ class TradingIntegration:
         try:
             response = self.session.post(
                 f"{self.server_url}/sync",
-                json={'timestamp': timestamp}
+                json={'timestamp': timestamp},
+                timeout=2
             )
             response.raise_for_status()
             return True
         except Exception as e:
-            logging.error(f"Failed to sync timestamp: {e}")
+            logging.debug(f"Failed to sync timestamp (this is normal if running standalone): {e}")
             return False
