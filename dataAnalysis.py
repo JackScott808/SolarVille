@@ -1,10 +1,10 @@
 # Branch: prosumerJack
 # File: dataAnalysis.py
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+import pandas as pd # type: ignore
+import numpy as np # type: ignore
+import matplotlib.pyplot as plt # type: ignore
+import matplotlib.dates as mdates # type: ignore
 from datetime import datetime, timedelta
 import calendar
 import logging
@@ -17,74 +17,95 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def load_data(file_path: str, household: str, start_date: str, timescale: str, chunk_size: int = 10000) -> pd.DataFrame:
     """
     Load and preprocess energy data from CSV file.
-    
-    Args:
-        file_path: Path to CSV file
-        household: Household ID
-        start_date: Start date in YYYY-MM-DD format
-        timescale: 'd' for day, 'w' for week, 'm' for month, 'y' for year
-        chunk_size: Size of chunks for reading large CSV files
     """
     start_time = time.time()
     start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
     end_date_obj = calculate_end_date(start_date, timescale)
     
-    filtered_chunks = []
-    chunks_with_data = 0
-    total_chunks = 0
+    logging.info(f"Loading data from {file_path}")
+    logging.info(f"Looking for household: {household}")
+    logging.info(f"Date range: {start_date} to {end_date_obj}")
     
-    for chunk in pd.read_csv(file_path, chunksize=chunk_size):
-        total_chunks += 1
+    try:
+        # First check if file exists
+        if not os.path.exists(file_path):
+            logging.error(f"File not found: {file_path}")
+            return pd.DataFrame()
         
-        # Filter by household and convert timestamp
-        chunk = chunk[chunk["LCLid"] == household]
-        chunk['datetime'] = pd.to_datetime(chunk['tstp'].str.replace('.0000000', ''))
-        chunk = chunk[(chunk['datetime'] >= start_date_obj) & 
-                     (chunk['datetime'] < end_date_obj)]
+        # Read first few lines to check CSV structure
+        with open(file_path, 'r') as f:
+            header = f.readline()
+            logging.info(f"CSV header: {header.strip()}")
+            first_line = f.readline()
+            logging.info(f"First data line: {first_line.strip()}")
+    
+        filtered_chunks = []
+        chunks_with_data = 0
+        total_chunks = 0
         
-        if not chunk.empty:
-            chunks_with_data += 1
+        for chunk in pd.read_csv(file_path, chunksize=chunk_size):
+            total_chunks += 1
             
-            # Add time-related columns
-            chunk['date'] = chunk['datetime'].dt.date
-            chunk['month'] = chunk['datetime'].dt.strftime("%B")
-            chunk['day_of_month'] = chunk['datetime'].dt.strftime("%d")
-            chunk['time'] = chunk['datetime'].dt.strftime('%X')
-            chunk['weekday'] = chunk['datetime'].dt.strftime('%A')
-            chunk['day_seconds'] = (chunk['datetime'] - 
-                                  chunk['datetime'].dt.normalize()).dt.total_seconds()
-
-            # Set up categorical data for proper ordering
-            chunk['weekday'] = pd.Categorical(
-                chunk['weekday'],
-                categories=['Monday', 'Tuesday', 'Wednesday', 'Thursday', 
-                           'Friday', 'Saturday', 'Sunday'],
-                ordered=True
-            )
-            chunk['month'] = pd.Categorical(
-                chunk['month'],
-                categories=calendar.month_name[1:],
-                ordered=True
-            )
-
-            # Clean and process energy data
-            chunk = chunk[chunk["energy(kWh/hh)"] != "Null"]
-            chunk["energy"] = chunk["energy(kWh/hh)"].astype("float64")
-            chunk["cumulative_sum"] = chunk.groupby('date')["energy"].cumsum()
+            # Log the unique households in each chunk
+            unique_households = chunk["LCLid"].unique()
+            logging.debug(f"Chunk {total_chunks} contains households: {unique_households}")
             
-            filtered_chunks.append(chunk)
+            # Filter by household and convert timestamp
+            chunk = chunk[chunk["LCLid"] == household]
+            if not chunk.empty:
+                logging.debug(f"Found data for household {household} in chunk {total_chunks}")
+                chunk['datetime'] = pd.to_datetime(chunk['tstp'])
+                chunk = chunk[(chunk['datetime'] >= start_date_obj) & 
+                             (chunk['datetime'] < end_date_obj)]
+                
+                if not chunk.empty:
+                    chunks_with_data += 1
+                    
+                    # Add time-related columns
+                    chunk['date'] = chunk['datetime'].dt.date
+                    chunk['month'] = chunk['datetime'].dt.strftime("%B")
+                    chunk['day_of_month'] = chunk['datetime'].dt.strftime("%d")
+                    chunk['time'] = chunk['datetime'].dt.strftime('%X')
+                    chunk['weekday'] = chunk['datetime'].dt.strftime('%A')
+                    chunk['day_seconds'] = (chunk['datetime'] - 
+                                          chunk['datetime'].dt.normalize()).dt.total_seconds()
+
+                    # Set up categorical data for proper ordering
+                    chunk['weekday'] = pd.Categorical(
+                        chunk['weekday'],
+                        categories=['Monday', 'Tuesday', 'Wednesday', 'Thursday', 
+                                   'Friday', 'Saturday', 'Sunday'],
+                        ordered=True
+                    )
+                    chunk['month'] = pd.Categorical(
+                        chunk['month'],
+                        categories=calendar.month_name[1:],
+                        ordered=True
+                    )
+
+                    # Clean and process energy data
+                    chunk = chunk[chunk["energy(kWh/hh)"] != "Null"]
+                    chunk["energy"] = chunk["energy(kWh/hh)"].astype("float64")
+                    chunk["cumulative_sum"] = chunk.groupby('date')["energy"].cumsum()
+                    
+                    filtered_chunks.append(chunk)
+                else:
+                    logging.debug(f"No data in date range for chunk {total_chunks}")
+            else:
+                logging.debug(f"No data for household {household} in chunk {total_chunks}")
+
+        if chunks_with_data > 0:
+            logging.info(f"Data found in {chunks_with_data} out of {total_chunks} chunks")
+            df = pd.concat(filtered_chunks)
+            df.set_index("datetime", inplace=True)
+            logging.info(f"Data loaded in {time.time() - start_time:.2f} seconds. Total rows: {len(df)}")
+            return df
         else:
-            logging.debug(f"No data found in chunk {total_chunks} for household {household}")
-
-    if chunks_with_data > 0:
-        logging.info(f"Data found in {chunks_with_data} out of {total_chunks} chunks")
-        df = pd.concat(filtered_chunks)
-        df.set_index("datetime", inplace=True)
-        logging.info(f"Data loaded in {time.time() - start_time:.2f} seconds. "
-                    f"Total rows: {len(df)}")
-        return df
-    else:
-        logging.error(f"No data loaded for household {household}")
+            logging.error(f"No data found for household {household} in date range {start_date} to {end_date_obj}")
+            return pd.DataFrame()
+            
+    except Exception as e:
+        logging.error(f"Error loading data: {str(e)}", exc_info=True)
         return pd.DataFrame()
 
 def calculate_end_date(start_date: str, timescale: str) -> str:
@@ -115,9 +136,9 @@ def get_current_readings():
     try:
         # Import hardware-specific libraries only when running on Raspberry Pi
         try:
-            import board
-            import busio
-            from adafruit_ina219 import INA219_I2C
+            import board # type: ignore
+            import busio # type: ignore
+            from adafruit_ina219 import INA219_I2C # type: ignore
             
             # Initialize I2C bus and sensor
             i2c = busio.I2C(board.SCL, board.SDA)
