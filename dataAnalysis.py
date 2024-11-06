@@ -47,7 +47,7 @@ def load_data(file_path: str, household: str, start_date: str, timescale: str, c
             logging.info(f"CSV header: {header.strip()}")
             first_line = f.readline()
             logging.info(f"First data line: {first_line.strip()}")
-            
+    
         filtered_chunks = []
         chunks_with_data = 0
         total_chunks = 0
@@ -57,9 +57,16 @@ def load_data(file_path: str, household: str, start_date: str, timescale: str, c
             total_chunks += 1
             logging.info(f"Processing chunk {total_chunks}...")
             
-            # Filter by household and convert timestamp
-            chunk = chunk[chunk["LCLid"] == household]
+            # Filter by household
+            chunk = chunk[chunk["LCLid"] == household].copy()
             if not chunk.empty:
+                # Convert energy values to numeric, replacing errors with NaN
+                chunk['energy(kWh/hh)'] = pd.to_numeric(chunk['energy(kWh/hh)'], errors='coerce')
+                
+                # Drop any rows where conversion failed
+                chunk = chunk.dropna(subset=['energy(kWh/hh)'])
+                
+                # Convert timestamp and filter by date range
                 chunk['datetime'] = pd.to_datetime(chunk['tstp'])
                 chunk = chunk[(chunk['datetime'] >= start_date_obj) & 
                              (chunk['datetime'] < end_date_obj)]
@@ -72,8 +79,12 @@ def load_data(file_path: str, household: str, start_date: str, timescale: str, c
         if chunks_with_data > 0:
             df = pd.concat(filtered_chunks)
             df.set_index("datetime", inplace=True)
-            logging.info(f"Data loaded in {time.time() - start_time:.2f} seconds. "
-                        f"Total rows: {len(df)}")
+            logging.info(f"Successfully loaded {len(df)} rows in {time.time() - start_time:.2f} seconds")
+            
+            # Verify data types
+            logging.info(f"Data types: {df.dtypes}")
+            logging.info(f"Sample of energy values: {df['energy(kWh/hh)'].head()}")
+            
             return df
         else:
             logging.error(f"No data found for household {household} in date range")

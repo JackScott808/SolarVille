@@ -47,13 +47,26 @@ class SimulationManager:
             timestamp: Current timestamp
             current_data: Current row of data
         """
-        # For consumer, we only need basic energy reading
-        reading = EnergyReading(
-            timestamp=timestamp,
-            demand=current_data['energy(kWh/hh)'],  # Using correct column name
-            balance=-current_data['energy(kWh/hh)']  # Negative as consumer only uses energy
-        )
-        return reading
+        try:
+            # Ensure energy value is numeric
+            energy = float(current_data['energy(kWh/hh)'])
+            
+            # For consumer, we only need basic energy reading
+            reading = EnergyReading(
+                timestamp=timestamp,
+                demand=energy,
+                balance=-energy  # Negative as consumer only uses energy
+            )
+            return reading
+            
+        except (ValueError, TypeError) as e:
+            logging.error(f"Error converting energy value: {current_data['energy(kWh/hh)']} - {str(e)}")
+            # Return a reading with zero values if conversion fails
+            return EnergyReading(
+                timestamp=timestamp,
+                demand=0.0,
+                balance=0.0
+            )
 
     def _handle_trade(self, reading, trade_result):
         """
