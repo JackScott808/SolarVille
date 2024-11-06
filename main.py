@@ -151,9 +151,11 @@ class SimulationManager:
             self.start_time = time.time()
             self.simulation_active = True
             
-            # Signal simulation start
-            logging.info("Signaling simulation start...")
-            self.trading_integration.sync_timestamp('START')
+            # Signal simulation start - don't stop if this fails
+            try:
+                self.trading_integration.sync_timestamp('START')
+            except Exception as e:
+                logging.debug(f"Failed to signal start (normal if running standalone): {e}")
             
             try:
                 logging.info("Beginning main simulation loop...")
@@ -161,34 +163,51 @@ class SimulationManager:
                     if not self.simulation_active:
                         break
                     
-                    logging.info(f"Processing timestamp: {timestamp}")
-                    current_data = df.loc[timestamp]
+                    try:
+                        logging.debug(f"Processing timestamp: {timestamp}")
+                        current_data = df.loc[timestamp]
+                        
+                        # Create reading object
+                        reading = self._create_reading(timestamp, current_data)
+                        
+                        # Update peer with current status - continue if this fails
+                        try:
+                            self.trading_integration.update_peer_data(reading)
+                        except Exception as e:
+                            logging.debug(f"Failed to update peer (normal if running standalone): {e}")
+                        
+                        # Process trade
+                        try:
+                            trade_result = self.trading_manager.process_trade(reading)
+                            if trade_result:
+                                self._handle_trade(reading, trade_result)
+                        except Exception as e:
+                            logging.debug(f"Failed to process trade (normal if running standalone): {e}")
+                        
+                        # Update displays
+                        self._update_displays(reading)
+                        
+                        # Sync timestamp - continue if this fails
+                        try:
+                            self.trading_integration.sync_timestamp(str(timestamp))
+                        except Exception as e:
+                            logging.debug(f"Failed to sync timestamp (normal if running standalone): {e}")
+                        
+                        # Calculate and apply sleep time
+                        sleep_time = calculate_sleep_time(timestamp, self.start_time)
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
                     
-                    # Create reading object
-                    reading = self._create_reading(timestamp, current_data)
-                    
-                    # Update peer with current status
-                    self.trading_integration.update_peer_data(reading)
-                    
-                    # Process trade
-                    trade_result = self.trading_manager.process_trade(reading)
-                    self._handle_trade(reading, trade_result)
-                    
-                    # Update displays
-                    self._update_displays(reading)
-                    
-                    # Sync timestamp with peer
-                    self.trading_integration.sync_timestamp(str(timestamp))
-                    
-                    # Calculate and apply sleep time
-                    sleep_time = calculate_sleep_time(timestamp, self.start_time)
-                    if sleep_time > 0:
-                        logging.debug(f"Sleeping for {sleep_time:.2f} seconds")
-                        time.sleep(sleep_time)
+                    except Exception as e:
+                        logging.error(f"Error processing timestamp {timestamp}: {e}")
+                        continue  # Continue with next timestamp even if this one fails
                 
                 logging.info("Main simulation loop completed")
-                # Signal simulation end
-                self.trading_integration.sync_timestamp('END')
+                # Signal simulation end - don't stop if this fails
+                try:
+                    self.trading_integration.sync_timestamp('END')
+                except Exception as e:
+                    logging.debug(f"Failed to signal end (normal if running standalone): {e}")
                 
             except KeyboardInterrupt:
                 logging.info("Simulation interrupted by user")
