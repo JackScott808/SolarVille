@@ -129,6 +129,7 @@ class SimulationManager:
         
         try:
             # Load data
+            logging.info("Loading data from file...")
             df = load_data(
                 self.args.file_path,
                 self.args.household,
@@ -140,7 +141,10 @@ class SimulationManager:
                 logging.error("No data loaded. Exiting simulation.")
                 return
             
+            logging.info(f"Successfully loaded {len(df)} rows of data")
+            
             # Start visualization
+            logging.info("Starting visualization...")
             self.vis_manager.start(df)
             
             # Record start time
@@ -148,13 +152,16 @@ class SimulationManager:
             self.simulation_active = True
             
             # Signal simulation start
+            logging.info("Signaling simulation start...")
             self.trading_integration.sync_timestamp('START')
             
             try:
+                logging.info("Beginning main simulation loop...")
                 for timestamp in df.index:
                     if not self.simulation_active:
                         break
                     
+                    logging.info(f"Processing timestamp: {timestamp}")
                     current_data = df.loc[timestamp]
                     
                     # Create reading object
@@ -176,8 +183,10 @@ class SimulationManager:
                     # Calculate and apply sleep time
                     sleep_time = calculate_sleep_time(timestamp, self.start_time)
                     if sleep_time > 0:
+                        logging.debug(f"Sleeping for {sleep_time:.2f} seconds")
                         time.sleep(sleep_time)
                 
+                logging.info("Main simulation loop completed")
                 # Signal simulation end
                 self.trading_integration.sync_timestamp('END')
                 
