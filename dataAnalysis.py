@@ -33,6 +33,10 @@ def load_data(file_path: str, household: str, start_date: str, timescale: str, c
         if not os.path.exists(file_path):
             logging.error(f"File not found: {file_path}")
             return pd.DataFrame()
+            
+        # Get file size
+        file_size = os.path.getsize(file_path)
+        logging.info(f"File size: {file_size/1024/1024:.2f} MB")
         
         # Read first few lines to check CSV structure
         with open(file_path, 'r') as f:
@@ -40,70 +44,52 @@ def load_data(file_path: str, household: str, start_date: str, timescale: str, c
             logging.info(f"CSV header: {header.strip()}")
             first_line = f.readline()
             logging.info(f"First data line: {first_line.strip()}")
+            
+            # Read a few more lines to get unique households
+            sample_lines = [f.readline() for _ in range(10)]
+            logging.info(f"Sample of first few lines:\n" + "\n".join(sample_lines))
     
         filtered_chunks = []
         chunks_with_data = 0
         total_chunks = 0
         
+        # Read the data in chunks
         for chunk in pd.read_csv(file_path, chunksize=chunk_size):
             total_chunks += 1
+            logging.info(f"Processing chunk {total_chunks}...")
             
             # Log the unique households in each chunk
             unique_households = chunk["LCLid"].unique()
-            logging.debug(f"Chunk {total_chunks} contains households: {unique_households}")
+            logging.info(f"Households in chunk {total_chunks}: {unique_households}")
             
-            # Filter by household and convert timestamp
-            chunk = chunk[chunk["LCLid"] == household]
-            if not chunk.empty:
-                logging.debug(f"Found data for household {household} in chunk {total_chunks}")
-                chunk['datetime'] = pd.to_datetime(chunk['tstp'])
-                chunk = chunk[(chunk['datetime'] >= start_date_obj) & 
-                             (chunk['datetime'] < end_date_obj)]
+            if household not in unique_households:
+                logging.debug(f"Household {household} not found in chunk {total_chunks}")
+                continue
                 
-                if not chunk.empty:
-                    chunks_with_data += 1
-                    
-                    # Add time-related columns
-                    chunk['date'] = chunk['datetime'].dt.date
-                    chunk['month'] = chunk['datetime'].dt.strftime("%B")
-                    chunk['day_of_month'] = chunk['datetime'].dt.strftime("%d")
-                    chunk['time'] = chunk['datetime'].dt.strftime('%X')
-                    chunk['weekday'] = chunk['datetime'].dt.strftime('%A')
-                    chunk['day_seconds'] = (chunk['datetime'] - 
-                                          chunk['datetime'].dt.normalize()).dt.total_seconds()
-
-                    # Set up categorical data for proper ordering
-                    chunk['weekday'] = pd.Categorical(
-                        chunk['weekday'],
-                        categories=['Monday', 'Tuesday', 'Wednesday', 'Thursday', 
-                                   'Friday', 'Saturday', 'Sunday'],
-                        ordered=True
-                    )
-                    chunk['month'] = pd.Categorical(
-                        chunk['month'],
-                        categories=calendar.month_name[1:],
-                        ordered=True
-                    )
-
-                    # Clean and process energy data
-                    chunk = chunk[chunk["energy(kWh/hh)"] != "Null"]
-                    chunk["energy"] = chunk["energy(kWh/hh)"].astype("float64")
-                    chunk["cumulative_sum"] = chunk.groupby('date')["energy"].cumsum()
-                    
-                    filtered_chunks.append(chunk)
-                else:
-                    logging.debug(f"No data in date range for chunk {total_chunks}")
-            else:
-                logging.debug(f"No data for household {household} in chunk {total_chunks}")
+            # Filter by household
+            chunk = chunk[chunk["LCLid"] == household].copy()
+            if chunk.empty:
+                continue
+                
+            logging.info(f"Found {len(chunk)} rows for household {household} in chunk {total_chunks}")
+            
+            # Convert timestamp
+            chunk['datetime'] = pd.to_datetime(chunk['tstp'])
+            chunk = chunk[(chunk['datetime'] >= start_date_obj) & 
+                         (chunk['datetime'] < end_date_obj)]
+            
+            if not chunk.empty:
+                chunks_with_data += 1
+                filtered_chunks.append(chunk)
+                logging.info(f"Added {len(chunk)} rows from chunk {total_chunks} to filtered data")
 
         if chunks_with_data > 0:
-            logging.info(f"Data found in {chunks_with_data} out of {total_chunks} chunks")
             df = pd.concat(filtered_chunks)
             df.set_index("datetime", inplace=True)
-            logging.info(f"Data loaded in {time.time() - start_time:.2f} seconds. Total rows: {len(df)}")
+            logging.info(f"Successfully loaded {len(df)} rows in {time.time() - start_time:.2f} seconds")
             return df
         else:
-            logging.error(f"No data found for household {household} in date range {start_date} to {end_date_obj}")
+            logging.error(f"No data found for household {household} in date range")
             return pd.DataFrame()
             
     except Exception as e:
@@ -256,53 +242,66 @@ def setup_plot_formatting(ax, interval: str):
 def update_plot_same(df: pd.DataFrame, start_date: str, end_date: str, 
                     interval: str, queue, ready_event):
     """Create and update real-time plot with combined lines."""
-    fig, ax = plt.subplots(figsize=(15, 6))
-    
-    # Initialize plot lines
-    demand_line, = ax.plot([], [], label='Energy Demand (kWh)', 
-                          color='red', marker='o', linestyle='-')
-    generation_line, = ax.plot([], [], label='Energy Generation (kWh)', 
-                             color='green', marker='o', linestyle='-')
-    net_line, = ax.plot([], [], label='Net Energy (kWh)', 
-                       color='blue', linestyle='--', marker='o')
-    
-    ax.legend()
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Energy (kWh)')
-    ax.set_title(f'Real-Time Energy Data for {start_date[:10]}')
-    
-    setup_plot_formatting(ax, interval)
-    ready_event.set()  # Signal plot is initialized
-
-    times, demands, generations, nets = [], [], [], []
-    
     try:
+        logging.info("Initializing plot...")
+        fig, ax = plt.subplots(figsize=(15, 6))
+        
+        # Initialize plot lines
+        demand_line, = ax.plot([], [], label='Energy Demand (kWh)', 
+                             color='red', marker='o', linestyle='-')
+        generation_line, = ax.plot([], [], label='Energy Generation (kWh)', 
+                                color='green', marker='o', linestyle='-')
+        net_line, = ax.plot([], [], label='Net Energy (kWh)', 
+                          color='blue', linestyle='--', marker='o')
+        
+        ax.legend()
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Energy (kWh)')
+        ax.set_title(f'Real-Time Energy Data for {start_date[:10]}')
+        
+        setup_plot_formatting(ax, interval)
+        logging.info("Plot initialized, setting ready event...")
+        ready_event.set()  # Signal plot is initialized
+
+        times, demands, generations, nets = [], [], [], []
+        
+        logging.info("Starting plot update loop...")
         while True:
-            data = queue.get()
-            if data == "done":
-                break
+            try:
+                logging.debug("Waiting for data...")
+                data = queue.get(timeout=1)  # Add 1 second timeout
+                if data == "done":
+                    logging.info("Received done signal, ending plot updates")
+                    break
 
-            timestamp = data['timestamp']
-            demand = df.loc[timestamp, 'energy']
-            generation = data.get('generation', 0)
+                timestamp = data['timestamp']
+                demand = data.get('demand', 0)
+                generation = data.get('generation', 0)
 
-            times.append(timestamp)
-            demands.append(demand)
-            generations.append(generation)
-            nets.append(generation - demand)
+                times.append(timestamp)
+                demands.append(demand)
+                generations.append(generation)
+                nets.append(generation - demand)
 
-            # Update plot data
-            demand_line.set_data(times, demands)
-            generation_line.set_data(times, generations)
-            net_line.set_data(times, nets)
-            
-            # Rescale plot
-            ax.relim()
-            ax.autoscale_view()
-            plt.draw()
-            plt.pause(0.01)
+                # Update plot data
+                demand_line.set_data(times, demands)
+                generation_line.set_data(times, generations)
+                net_line.set_data(times, nets)
+                
+                # Rescale plot
+                ax.relim()
+                ax.autoscale_view()
+                plt.draw()
+                plt.pause(0.01)
+                logging.debug(f"Updated plot with data at {timestamp}")
 
+            except queue.Empty:
+                logging.debug("No data received in the last second, continuing...")
+                plt.pause(0.01)  # Keep the plot responsive
+                continue
+                
     except Exception as e:
-        logging.error(f"Error updating plot: {e}")
+        logging.error(f"Error in plot update loop: {e}", exc_info=True)
     finally:
-        plt.show()
+        logging.info("Closing plot")
+        plt.close()  # Ensure plot is closed when done
