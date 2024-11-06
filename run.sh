@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-echo "Starting consumer simulation..."
+echo "Starting Prosumer simulation..."
 python run.py \
     --file_path "$DATA_FILE" \
     --household "$CONSUMER_HOUSEHOLD" \
