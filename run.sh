@@ -3,7 +3,7 @@
 #!/bin/bash
 
 # Default values
-DATA_FILE="/home/pi/block_0.csv" # Replace with path to data file
+DATA_FILE="~/block_0.csv" # Replace with path to data file
 START_DATE="2012-10-24"
 TIMESCALE="d"
 PROSUMER_HOUSEHOLD="MAC000246"
@@ -16,7 +16,7 @@ show_usage() {
     echo "  --date <YYYY-MM-DD>: Start date (default: $START_DATE)"
     echo "  --scale <d|w|m|y>  : Timescale (default: $TIMESCALE)"
     echo "Example:"
-    echo "  $0 --file /home/pi/block_0.csv --date 2012-10-24 --scale d"
+    echo "  $0 --file ~/block_0.csv --date 2012-10-24 --scale d"
 }
 
 # Parse optional arguments

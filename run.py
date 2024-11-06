@@ -29,9 +29,9 @@ def main():
     except KeyboardInterrupt:
         logging.info("Consumer simulation stopped by user")
     except Exception as e:
-        logging.error(f"Error in consumer simulation: {e}", exc_info=True)
+        logging.error(f"Error in Prosumer simulation: {e}", exc_info=True)
     finally:
-        logging.info("Consumer simulation ended")
+        logging.info("Prosumer simulation ended")
 
 if __name__ == "__main__":
     main()
