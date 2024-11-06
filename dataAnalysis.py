@@ -105,6 +105,85 @@ def calculate_end_date(start_date: str, timescale: str) -> str:
     end_date_obj = start_date_obj + timescale_deltas[timescale]
     return end_date_obj.strftime("%Y-%m-%d %H:%M:%S")
 
+# Add these functions to dataAnalysis.py
+
+def get_current_readings():
+    """
+    Get current readings from hardware sensors.
+    Returns dictionary with solar power, battery voltage, and battery current.
+    """
+    try:
+        # Import hardware-specific libraries only when running on Raspberry Pi
+        try:
+            import board
+            import busio
+            from adafruit_ina219 import INA219_I2C
+            
+            # Initialize I2C bus and sensor
+            i2c = busio.I2C(board.SCL, board.SDA)
+            ina219 = INA219_I2C(i2c)
+            
+            # Get readings
+            return {
+                'solar_power': ina219.power,  # in watts
+                'battery_voltage': ina219.bus_voltage,  # in volts
+                'battery_current': ina219.current  # in mA
+            }
+        except ImportError:
+            # Return mock values when not running on Raspberry Pi
+            return {
+                'solar_power': 0.5,  # 0.5W mock reading
+                'battery_voltage': 3.7,  # 3.7V mock reading
+                'battery_current': 100  # 100mA mock reading
+            }
+    except Exception as e:
+        logging.error(f"Error getting hardware readings: {e}")
+        return {
+            'solar_power': 0,
+            'battery_voltage': 0,
+            'battery_current': 0
+        }
+
+def battery_charging(excess_energy, battery_soc, battery_capacity):
+    """
+    Calculate new battery state of charge when charging.
+    
+    Args:
+        excess_energy (float): Energy available for charging (kWh)
+        battery_soc (float): Current battery state of charge (0-1)
+        battery_capacity (float): Total battery capacity (kWh)
+    
+    Returns:
+        tuple: (new_soc, energy_to_grid)
+    """
+    max_charge = battery_capacity * (1 - battery_soc)  # Available capacity
+    energy_to_battery = min(excess_energy, max_charge)
+    energy_to_grid = excess_energy - energy_to_battery
+    new_soc = battery_soc + (energy_to_battery / battery_capacity)
+    
+    return new_soc, energy_to_grid
+
+def battery_supply(energy_needed, battery_soc, battery_capacity, depth_of_discharge):
+    """
+    Calculate new battery state of charge when discharging.
+    
+    Args:
+        energy_needed (float): Energy requested from battery (kWh)
+        battery_soc (float): Current battery state of charge (0-1)
+        battery_capacity (float): Total battery capacity (kWh)
+        depth_of_discharge (float): Maximum allowed discharge depth (0-1)
+    
+    Returns:
+        tuple: (new_soc, energy_from_grid)
+    """
+    min_soc = 1 - depth_of_discharge
+    available_energy = (battery_soc - min_soc) * battery_capacity
+    energy_from_battery = min(energy_needed, available_energy)
+    energy_from_grid = energy_needed - energy_from_battery
+    new_soc = battery_soc - (energy_from_battery / battery_capacity)
+    
+    return new_soc, energy_from_grid
+
 def calculate_sleep_time(current_timestamp: datetime, start_time: float) -> float:
     """
     Calculate sleep time to maintain correct simulation speed.
