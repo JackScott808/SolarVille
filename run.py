@@ -15,7 +15,7 @@ def main():
         args = parse_arguments()
         
         # Create and start simulation
-        # Note: is_prosumer is hardcoded to False since this is the consumer branch
+        # Note: is_prosumer is hardcoded to True since this is the Prosumer branch
         simulation = SimulationManager(args, is_prosumer=True)
         
         logging.info("Starting Prosumer simulation...")
