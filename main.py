@@ -103,8 +103,11 @@ class SimulationManager:
         Args:
             reading: Current energy reading
         """
-        # Update LCD with current status
-        self.lcd_manager.display_energy_status(reading.demand)
+        # Get the current generation value from visualization manager
+        generation = self.vis_manager.df.loc[reading.timestamp, 'generation'] if self.vis_manager.df is not None else 0
+        
+        # Update LCD with current status including generation
+        self.lcd_manager.display_energy_status(reading.demand, generation)
         
         # Update visualization
         self.vis_manager.update(reading)

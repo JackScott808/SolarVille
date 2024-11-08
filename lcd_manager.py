@@ -53,9 +53,12 @@ class LCDManager:
         message = f"Trade:{amount:.2f}kWh\nPrice:£{price:.2f}"
         self.display_message(message)
 
-    def display_energy_status(self, demand: float):
-        """Display energy status"""
-        message = f"Demand:{demand:.2f}kWh"
+    def display_energy_status(self, demand: float, generation: float = 0):
+        """Display energy status including generation"""
+        # Format for 16x2 display:
+        # D: 1.23 G: 0.45
+        # Net: -0.78 kWh
+        message = f"D:{demand:.2f} G:{generation:.2f}\nNet:{generation-demand:.2f}kWh"
         self.display_message(message)
 
     def clear(self):
