@@ -19,6 +19,21 @@ from config import SIMULATION_SPEEDUP
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def simulate_generation(df, mean=0.5, std=0.2):
+    """
+    Simulate energy generation data
+    Args:
+        df: DataFrame with energy data
+        mean: Mean value for normal distribution
+        std: Standard deviation for normal distribution
+    Returns:
+        DataFrame with added generation column
+    """
+    np.random.seed(42)  # Set random seed for reproducibility
+    df['generation'] = np.random.normal(mean, std, df.shape[0])
+    df['generation'] = df['generation'].clip(lower=0)  # Clip negative values to zero
+    return df
+
 def load_data(file_path: str, household: str, start_date: str, timescale: str, chunk_size: int = 10000) -> pd.DataFrame:
     """
     Load and preprocess energy data from CSV file.
@@ -79,11 +94,12 @@ def load_data(file_path: str, household: str, start_date: str, timescale: str, c
         if chunks_with_data > 0:
             df = pd.concat(filtered_chunks)
             df.set_index("datetime", inplace=True)
-            logging.info(f"Successfully loaded {len(df)} rows in {time.time() - start_time:.2f} seconds")
             
-            # Verify data types
-            logging.info(f"Data types: {df.dtypes}")
-            logging.info(f"Sample of energy values: {df['energy(kWh/hh)'].head()}")
+            # Add simulated generation data
+            df = simulate_generation(df)
+            
+            logging.info(f"Successfully loaded {len(df)} rows in {time.time() - start_time:.2f} seconds")
+            logging.info(f"Added simulated generation data with mean={df['generation'].mean():.2f}, std={df['generation'].std():.2f}")
             
             return df
         else:
