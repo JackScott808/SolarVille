@@ -1,3 +1,4 @@
+# consumer
 def calculate_price(supply, demand):
     base_price = 0.10  # Base price per kWh in pounds
     if demand > 0 and supply > 0:

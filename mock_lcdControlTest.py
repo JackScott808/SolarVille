@@ -1,3 +1,4 @@
+# consumer
 # Mock display module for testing on non-Raspberry Pi platforms
 import logging
 
