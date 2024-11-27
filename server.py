@@ -1,4 +1,4 @@
-# consumer
+# Consumer
 from flask import Flask, request, jsonify
 from io import StringIO
 import pandas as pd
@@ -17,8 +17,8 @@ peer_ready = {}
 simulation_started = threading.Event()
 peer_data = {}
 
-# Initialize a global DataFrame
-df = pd.DataFrame(columns=['Enable', 'demand', 'balance', 'currency', 'trade_amount'])
+# Initialize DataFrame with all required columns
+df = pd.DataFrame(columns=['Enable', 'demand', 'balance', 'currency', 'trade_amount', 'generation', 'battery_charge'])
 
 # Shared data for the example
 energy_data = {
@@ -83,8 +83,16 @@ def update_peer_data():
     if peer_ip not in peer_data:
         peer_data[peer_ip] = {}
     peer_data[peer_ip].update(data)
-    logging.info(f"Updated server peer data for {peer_ip}: Demand: {data.get('demand', 'N/A')}kWh, "
-                 f"Balance: {data.get('balance', 'N/A')}kWh")
+    
+    demand = data.get('demand', 'N/A')
+    balance = data.get('balance', 'N/A')
+    
+    # Safely format the logging message with checks for numeric types
+    logging.info(
+        f"Updated server peer data for {peer_ip}: "
+        f"Demand: {float(demand):.2f} kWh, " if isinstance(demand, (int, float)) else "Demand: N/A, "
+        f"Balance: {float(balance):.2f} kWh, " if isinstance(balance, (int, float)) else "Balance: N/A"
+    )
     return jsonify({"status": "updated"})
 
 @app.route('/update_trade_data', methods=['POST'])
@@ -101,7 +109,7 @@ def update_trade_data():
         df = pd.read_json(StringIO(df_json), orient='split')
         logging.info(f"Server received updated DataFrame with Enable column updated.")
         
-    trade_amount = data.get('trade_amountn', 'N/A')
+    trade_amount = data.get('trade_amount', 'N/A')  # Fixed typo here
     buy_grid_price = data.get('buy_grid_price', 'N/A')
     peer_price = data.get('peer_price', 'N/A')
     battery_charge = data.get('battery_charge', 'N/A')
@@ -114,84 +122,20 @@ def update_trade_data():
         f"Peer price: {float(peer_price):.2f} pound/kWh, " if isinstance(peer_price, (int, float)) else "Peer price: N/A, "
         f"Battery Charge: {float(battery_charge) * 100:.2f}% " if isinstance(battery_charge, (int, float)) else "Battery Charge: N/A"
     )
-    return jsonify({"status": "updated"}) 
+    return jsonify({"status": "updated"})
 
-@app.route('/start', methods=['POST'])
-def start():
-    global peers, peer_ready
-    data = request.json
-    peers = data.get('peers', peers)  # Use existing peers if not provided
-    
-    # Initialize peer_ready dictionary
-    for peer in peers:
-        if peer not in peer_ready:
-            peer_ready[peer] = False
-
-    timeout = time.time() + 60  # 60 second timeout
-    while not all(peer_ready.get(peer, False) for peer in peers):
-        if time.time() > timeout:
-            return jsonify({"status": "Timeout waiting for peers"}), 408
-        time.sleep(0.1)
-    simulation_started.set()
-    return jsonify({"status": "Simulation started"})
-
-start_time = None
-
-# remove this in the realTime version
-@app.route('/sync_start', methods=['POST'])
-def sync_start():
-    global start_time, peers
-    data = request.json
-    start_time = data.get('start_time')
-    peers = data.get('peers', [])
-    if start_time and peers:
-        logging.info(f"Sync start received. Start time: {start_time}, Peers: {peers}")
-        return jsonify({"status": "start time and peers set", "start_time": start_time, "peers": peers})
-    else:
-        logging.warning("Invalid start time or peers in sync_start request")
-        return jsonify({"error": "Invalid start time or peers"}), 400
-
-simulation_start_time = None
-
-@app.route('/start_simulation', methods=['POST'])
-def start_simulation():
-    global simulation_start_time
-    data = request.json
-    simulation_start_time = data.get('start_time')
-    if simulation_start_time:
-        simulation_started.set()
-        return jsonify({"status": "Simulation started"})
-    else:
-        return jsonify({"error": "Invalid start time"}), 400
-
-@app.route('/get_data', methods=['GET'])
-def get_data():
-    global energy_data
-    try:
-        return jsonify(energy_data)
-    except Exception as e:
-        logging.error(f"Error getting data: {e}")
-        return jsonify({"error": str(e)}), 400
-
-@app.route('/get_peer_data', methods=['GET'])
-def get_peer_data():
-    return jsonify(peer_data)
-
-# Modify the get_dataframe route to return JSON instead of CSV
 @app.route('/get_dataframe', methods=['GET'])
 def get_dataframe():
     global df
     try:
         if df.empty:
-            logging.warning("DataFrame is empty. Returning an empty DataFrame.")
+            logging.warning("DataFrame is empty. Returning empty DataFrame.")
             return df.to_json(orient='split'), 200
         return df.to_json(orient='split'), 200
     except Exception as e:
         logging.error(f"Error serving DataFrame: {e}")
         return jsonify({"error": str(e)}), 500
 
-# Add a route to update the DataFrame
-# In server.py
 @app.route('/update_dataframe', methods=['POST'])
 def update_dataframe():
     global df
@@ -219,6 +163,49 @@ def update_dataframe():
     except Exception as e:
         logging.error(f"Error updating DataFrame: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/start', methods=['POST'])
+def start():
+    global peers, peer_ready
+    data = request.json
+    peers = data.get('peers', peers)  # Use existing peers if not provided
+    
+    # Initialize peer_ready dictionary
+    for peer in peers:
+        if peer not in peer_ready:
+            peer_ready[peer] = False
+
+    timeout = time.time() + 60  # 60 second timeout
+    while not all(peer_ready.get(peer, False) for peer in peers):
+        if time.time() > timeout:
+            return jsonify({"status": "Timeout waiting for peers"}), 408
+        time.sleep(0.1)
+    simulation_started.set()
+    return jsonify({"status": "Simulation started"})
+
+@app.route('/start_simulation', methods=['POST'])
+def start_simulation():
+    global simulation_start_time
+    data = request.json
+    simulation_start_time = data.get('start_time')
+    if simulation_start_time:
+        simulation_started.set()
+        return jsonify({"status": "Simulation started"})
+    else:
+        return jsonify({"error": "Invalid start time"}), 400
+
+@app.route('/get_data', methods=['GET'])
+def get_data():
+    global energy_data
+    try:
+        return jsonify(energy_data)
+    except Exception as e:
+        logging.error(f"Error getting data: {e}")
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/get_peer_data', methods=['GET'])
+def get_peer_data():
+    return jsonify(peer_data)
 
 @app.route('/wait_for_start', methods=['GET'])
 def wait_for_start():
