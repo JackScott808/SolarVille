@@ -240,14 +240,16 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     # Update LCD display
     display_message(f"Bat:{battery_soc*100:.0f}% Gen:{solar_power:.0f}W")
     
-    logging.info(
-        f"At {timestamp} - Generation: {solar_power:.6f} W, "
-        f"Demand: {demand:.2f} kWh, Battery: {battery_soc*100:.2f}%, "
-        f"Balance: {df.loc[timestamp, 'balance']:.6f} kWh, "
-        f"Currency: {df.loc[timestamp, 'currency']:.2f}, "
-        f"Trade amount: {trade_amount} kWh, "
-        f"LCD updated"
-    )
+    l# In process_trading_and_lcd on both branches
+    logging.info(f"""
+    Current trading state:
+    Demand: {demand} kWh
+    Generation: {solar_energy} kWh
+    Balance: {balance} kWh
+    Peer balance: {peer_balance} kWh
+    Trading amount: {trade_amount} kWh
+    Battery SoC: {battery_soc * 100:.1f}%
+    """)
     
     # Set Enable = 1 for the current timestamp
     df.loc[timestamp, 'Enable'] = 1

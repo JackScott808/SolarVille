@@ -7,9 +7,9 @@ import csv
 from datetime import datetime
 
 if not MOCK_HARDWARE:
-    import board
-    import busio
-    import adafruit_ina219
+    import board # type: ignore
+    import busio # type: ignore
+    import adafruit_ina219 # type: ignore
     import adafruit_character_lcd.character_lcd as characterlcd # type: ignore
 
     # I2C setup
