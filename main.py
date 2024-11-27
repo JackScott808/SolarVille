@@ -19,6 +19,7 @@ SOLAR_SCALE_FACTOR = 4000  # Adjust this value as needed
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# In main.py on consumer branch
 def start_simulation_local(args):
     start_time = time.time()
     logging.info("Starting simulation...")
@@ -35,7 +36,23 @@ def start_simulation_local(args):
     plot_process.start()
 
     ready_event.wait()  # Wait for the plot to be initialized
-    logging.info("Plot initialized, waiting for simulation to start...")
+    logging.info("Plot initialized, waiting for prosumer...")
+
+    simulation_started = False
+    while not simulation_started:
+        try:
+            response = requests.get(f'http://{PEER_IP}:5000/simulation_status')
+            if response.status_code == 200:
+                status = response.json()
+                if status['status'] == 'starting' or status['status'] == 'in_progress':
+                    simulation_started = True
+                    logging.info("Simulation starting, processing data...")
+                else:
+                    logging.debug(f"Waiting for prosumer... (status: {status['status']})")
+                    time.sleep(1)
+        except Exception as e:
+            logging.error(f"Error checking simulation status: {e}")
+            time.sleep(1)
 
     try:
         while True:
@@ -53,14 +70,7 @@ def start_simulation_local(args):
                         logging.info(f"Processed timestamp: {timestamp}")
                     else:
                         logging.warning(f"Timestamp {timestamp} not found in local DataFrame")
-                elif status['status'] == 'not_started':
-                    logging.info("Waiting for simulation to start...")
-                else:
-                    logging.info(f"Unknown simulation status: {status['status']}")
-            else:
-                logging.error("Failed to get simulation status from prosumer")
-            
-            time.sleep(1)  # Adjust as needed
+            time.sleep(1)
 
     except KeyboardInterrupt:
         logging.info("Simulation interrupted.")
@@ -144,11 +154,11 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
                         df.loc[timestamp, ['balance', 'currency', 'trade_amount']] = [
                             df.loc[timestamp, 'balance'] - balance,  # update balance
                             df.loc[timestamp, 'currency'] - trade_amount * peer_price - buy_from_grid * buy_grid_price,  # update currency
-                            trade_amount  # update trade_amountge
+                            trade_amount  # update trade_amount
                         ]
                             
-                        logging.info(f"Bought {trade_amount*1000:.2f} Wh from peer at {peer_price:.2f} ￡/kWh" # unit
-                                    f"and the remaining {buy_from_grid*1000:.2f} Wh to the grid at {buy_grid_price:.2f} ￡/kWh") # unit
+                        logging.info(f"Bought {trade_amount:.2f} kWh from peer at {peer_price:.2f} ￡/kWh" # unit
+                                    f"and the remaining {buy_from_grid:.2f} kWh to the grid at {buy_grid_price:.2f} ￡/kWh") # unit
                         break
                     else:
                         logging.error("Waiting for prosumer to enable trading.")
@@ -169,13 +179,16 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
         # Update LCD display
         display_message(f"Dem:{demand*1000:.0f}Wh Tra:{trade_amount*1000:.0f}Wh") # unit
         
-        logging.info(
-            f"At {timestamp} , "
-            f"Demand: {demand*1000:.2f}Wh, " # unit
-            f"Balance: {df.loc[timestamp, 'balance']:.6f}Wh, "
-            f"Currency: {df.loc[timestamp, 'currency']:.2f}￡, "
-            f"LCD updated"
-        )
+        # Send updates to Flask server
+        logging.info(f"""
+        Current trading state:
+        Demand: {demand} kWh
+        Generation: {solar_energy} kWh
+        Balance: {balance} kWh
+        Peer balance: {peer_balance} kWh
+        Trading amount: {trade_amount} kWh
+        Battery SoC: {battery_soc * 100:.1f}%
+        """)
         
     return df
 

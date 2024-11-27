@@ -191,16 +191,29 @@ def get_dataframe():
         return jsonify({"error": str(e)}), 500
 
 # Add a route to update the DataFrame
+# In server.py
 @app.route('/update_dataframe', methods=['POST'])
 def update_dataframe():
     global df
     try:
         data = request.json
-        new_df = pd.read_json(data['df'], orient='split')
+        # Use StringIO to fix the deprecation warning
+        new_df = pd.read_json(StringIO(data['df']), orient='split')
         timestamp = pd.Timestamp(data['timestamp'])
-        if 'Enable' not in new_df.columns:
-            new_df['Enable'] = 0
-        df = pd.concat([df, new_df.loc[[timestamp]]]).drop_duplicates(subset='timestamp').reset_index(drop=True)
+        
+        # Initialize df if empty
+        if df.empty:
+            df = new_df
+        else:
+            # Update or append new data
+            try:
+                df.loc[timestamp] = new_df.loc[timestamp]
+            except KeyError:
+                df = pd.concat([df, new_df.loc[[timestamp]]], axis=0)
+            
+            # Clean up and sort
+            df = df.sort_index().drop_duplicates()
+        
         logging.info(f"DataFrame updated successfully for timestamp {timestamp}")
         return jsonify({"status": "success"}), 200
     except Exception as e:
