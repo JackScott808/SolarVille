@@ -22,7 +22,7 @@ except ImportError:
 from io import StringIO
 
 try:
-    from capacitorControl import update_capacitor_charge, read_capacitor_charge
+    from capacitorControl import update_capacitor_charge, read_capacitor_charge # type: ignore
 except ImportError:
     from mock_capacitorControl import update_capacitor_charge, read_capacitor_charge
 
