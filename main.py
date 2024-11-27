@@ -181,13 +181,10 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
         
         # Send updates to Flask server
         logging.info(f"""
-        Current trading state:
-        Demand: {demand} kWh
-        Generation: {solar_energy} kWh
-        Balance: {balance} kWh
-        Peer balance: {peer_balance} kWh
-        Trading amount: {trade_amount} kWh
-        Battery SoC: {battery_soc * 100:.1f}%
+            Current trading state:
+            Demand: {demand} kWh
+            Balance: {balance} kWh
+            Trading amount: {trade_amount} kWh
         """)
         
     return df
