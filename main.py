@@ -240,7 +240,7 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
     # Update LCD display
     display_message(f"Bat:{battery_soc*100:.0f}% Gen:{solar_power:.0f}W")
     
-    l# In process_trading_and_lcd on both branches
+    # In process_trading_and_lcd on both branches
     logging.info(f"""
     Current trading state:
     Demand: {demand} kWh
