@@ -17,6 +17,9 @@ peer_ready = {}
 simulation_started = threading.Event()
 peer_data = {}
 
+# Initialize DataFrame with all required columns
+df = pd.DataFrame(columns=['Enable', 'demand', 'balance', 'currency', 'trade_amount', 'generation', 'battery_charge'])
+
 # Shared data for the example
 energy_data = {
     "balance": 0,
@@ -25,9 +28,6 @@ energy_data = {
     "generation": 0,
     "battery_charge": 0,
 }
-
-df = pd.DataFrame()
-
 
 current_timestamp = None
 simulation_ended = Event()
@@ -68,11 +68,39 @@ def get_dataframe():
     global df
     try:
         if df.empty:
-            logging.warning("Datafram is empty. Returning empty DataFrame.")
+            logging.warning("DataFrame is empty. Returning empty DataFrame.")
             return df.to_json(orient='split'), 200
         return df.to_json(orient='split'), 200
     except Exception as e:
         logging.error(f"Error serving DataFrame: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/update_dataframe', methods=['POST'])
+def update_dataframe():
+    global df
+    try:
+        data = request.json
+        # Use StringIO to fix the deprecation warning
+        new_df = pd.read_json(StringIO(data['df']), orient='split')
+        timestamp = pd.Timestamp(data['timestamp'])
+        
+        # Initialize df if empty
+        if df.empty:
+            df = new_df
+        else:
+            # Update or append new data
+            try:
+                df.loc[timestamp] = new_df.loc[timestamp]
+            except KeyError:
+                df = pd.concat([df, new_df.loc[[timestamp]]], axis=0)
+            
+            # Clean up and sort
+            df = df.sort_index().drop_duplicates()
+        
+        logging.info(f"DataFrame updated successfully for timestamp {timestamp}")
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        logging.error(f"Error updating DataFrame: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/ready', methods=['POST'])
@@ -101,9 +129,9 @@ def update_peer_data():
     
     # Safely format the logging message with checks for numeric types
     logging.info(
-    f"Updated server peer data for {peer_ip}: "
-    f"Demand: {float(demand):.2f} kWh, " if isinstance(demand, (int, float)) else "Demand: N/A, "
-    f"Balance: {float(balance):.2f} kWh, " if isinstance(balance, (int, float)) else "Balance: N/A"
+        f"Updated server peer data for {peer_ip}: "
+        f"Demand: {float(demand):.2f} kWh, " if isinstance(demand, (int, float)) else "Demand: N/A, "
+        f"Balance: {float(balance):.2f} kWh, " if isinstance(balance, (int, float)) else "Balance: N/A"
     )
     return jsonify({"status": "updated"})
 
@@ -119,7 +147,7 @@ def update_trade_data():
     # Update the global DataFrame
     df_json = data.get('df')
     if df_json:
-        df = pd.read_json(df_json, orient='split')
+        df = pd.read_json(StringIO(df_json), orient='split')
         logging.info(f"Updated global DataFrame with new data.")
         
     trade_amount = data.get('trade_amount', 'N/A')
@@ -135,8 +163,7 @@ def update_trade_data():
         f"Peer price: {float(peer_price):.2f} pound/kWh, " if isinstance(peer_price, (int, float)) else "Peer price: N/A, "
         f"Battery Charge: {float(battery_charge) * 100:.2f}% " if isinstance(battery_charge, (int, float)) else "Battery Charge: N/A"
     )
-    return jsonify({"status": "updated"}) 
-
+    return jsonify({"status": "updated"})
 
 @app.route('/start', methods=['POST'])
 def start():
@@ -156,24 +183,6 @@ def start():
         time.sleep(0.1)
     simulation_started.set()
     return jsonify({"status": "Simulation started"})
-
-start_time = None
-
-# remove this in the realTime version
-@app.route('/sync_start', methods=['POST'])
-def sync_start():
-    global start_time, peers
-    data = request.json
-    start_time = data.get('start_time')
-    peers = data.get('peers', [])
-    if start_time and peers:
-        logging.info(f"Sync start received. Start time: {start_time}, Peers: {peers}")
-        return jsonify({"status": "start time and peers set", "start_time": start_time, "peers": peers})
-    else:
-        logging.warning("Invalid start time or peers in sync_start request")
-        return jsonify({"error": "Invalid start time or peers"}), 400
-
-simulation_start_time = None
 
 @app.route('/start_simulation', methods=['POST'])
 def start_simulation():
@@ -208,4 +217,3 @@ def wait_for_start():
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000)
-
