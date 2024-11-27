@@ -10,12 +10,24 @@ import requests
 from pricing import calculate_price
 from dataAnalysis import load_data, calculate_end_date, update_plot_separate, update_plot_same
 from config import LOCAL_IP, PEER_IP
-from solarMonitor import get_current_readings
+try:
+    from solarMonitor import get_current_readings
+except ImportError:
+    from mock_solarMonitor import get_current_readings
 from battery_energy_management import battery_charging, battery_supply
-from lcdControlTest import display_message
+try:
+    from lcdControlTest import display_message
+except ImportError:
+    from mock_lcdControlTest import display_message
 from io import StringIO
 
-SOLAR_SCALE_FACTOR = 8000  # Adjust this value as needed
+try:
+    from capacitorControl import update_capacitor_charge, read_capacitor_charge
+except ImportError:
+    from mock_capacitorControl import update_capacitor_charge, read_capacitor_charge
+
+
+SOLAR_SCALE_FACTOR = 12000  # Adjusted for mock data
 trade_amount = 0
 battery_soc = 0.5
 
