@@ -1,3 +1,4 @@
+# Prosumer
 # mock_batteryControl.py
 def update_battery_charge(power_generated, power_demand):
     # Mock update logic
