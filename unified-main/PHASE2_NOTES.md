@@ -74,12 +74,32 @@ python3 core/main.py --mock --device pi1 --no-plot       # file only
 python3 core/main.py --mock --device pi1 --plot-theme dark --plot-dir results
 ```
 
+## Running two nodes and checking they trade
+
+```bash
+scripts/two_nodes.sh [start_date] [speed]     # default: 2013-07-08 (very sunny), 900x
+```
+
+Runs pi1 (prosumer) and pi2 (consumer) as separate processes, each listening on its own loopback address
+(127.0.0.1 / 127.0.0.2, so both can use port 5000), then `scripts/verify_two_nodes.py` checks: same trades on both
+sides, energy sold == bought, final balances match an independent recomputation, and every possible trade
+happened. On macOS first run `sudo ifconfig lo0 alias 127.0.0.2`. On a real network use `--bind` (default
+0.0.0.0) and the Pis' addresses in `config/network_topology.yml`.
+
+Running it found a bug no unit test could: `TradingIntegration` called `NetworkManager.get_device_by_name()`,
+which did not exist (the integration test added the method to its own mock), so no trade could ever complete.
+Fixed, with tests against a real `NetworkManager`. Result on the default day: 18 trades, 2.326 kWh at
+£0.055/kWh (pi2 saved £0.45 vs buying that energy from the grid; pi1 earned £0.01 more than exporting it).
+
 ## Still to do
 
 - Real hardware: `SolarMonitor`, `CapacitorManager` and `LCDManager` only implement mock mode
   (`# TODO: Initialize real ...`). The old INA219 / LCD code is in `Old Code/` and the `realTime` branch.
-- Not yet run across two real machines: the peer-to-peer path is covered by in-process tests with a fake
-  network, and each node has been run alone in mock mode. Both nodes want port 5000, so two on one machine clash.
+- Two nodes have been run as separate processes on one machine (below) but not yet on two physical machines.
+- Trades are attributed to the interval in which they arrive, and the two processes are not clock-synchronised
+  (they start ~1-2s apart), so a trade near an interval boundary can be booked in adjacent intervals on the two
+  nodes. Totals are exact; per-interval figures can shift by one slot. Fix: stamp offers/requests/matches with the
+  simulated interval and settle by that, rather than by arrival time.
 - The live window has only been exercised headlessly (spawned process, Agg backend), not on a real display.
 - Trades settle within the same interval only if peers answer within it; a late acknowledgement is counted in
   the next interval.

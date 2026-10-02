@@ -141,6 +141,46 @@ class TestTradeSettlement(unittest.TestCase):
         self.assertIsNone(TradeRequest.from_dict(old).expiry)
 
 
+class TestRealNetworkIntegration(unittest.TestCase):
+    """TradingIntegration against a *real* NetworkManager (only the HTTP call is faked).
+
+    The mock-based integration tests hand-add whatever method the code calls, so they cannot notice
+    when the real NetworkManager lacks it - which is how notify_trade_completion shipped broken.
+    """
+
+    def setUp(self):
+        from network.trading_integration import TradingIntegration
+        config = Mock(spec=ConfigManager)
+        self.pi1 = PiDevice("pi1", "127.0.0.1", True, "prosumer-pi-1")
+        self.pi2 = PiDevice("pi2", "127.0.0.2", False, "consumer-pi-1")
+        config.devices = {"pi1": self.pi1, "pi2": self.pi2}
+        config.get_local_device.return_value = self.pi1
+        config.server_port = 5000
+        config.retry_attempts = 1
+        config.timeout_seconds = 1
+        self.network = NetworkManager(config)
+        self.integration = TradingIntegration(self.network)
+        self.match = TradeMatch("o1", "r1", "pi1", "pi2", 0.4, 0.055)
+
+    def test_get_device_by_name(self):
+        self.assertIs(self.network.get_device_by_name("pi2"), self.pi2)
+        self.assertIsNone(self.network.get_device_by_name("nope"))
+
+    def test_notify_trade_completion_posts_to_the_peer(self):
+        self.network.send_request = Mock(return_value={"status": "success"})
+        ok = asyncio.run(self.integration.notify_trade_completion("pi2", "m1", self.match))
+        self.assertTrue(ok)
+        kwargs = self.network.send_request.call_args.kwargs
+        self.assertEqual(kwargs["peer"], self.pi2)
+        self.assertEqual(kwargs["endpoint"], "/trade/completion")
+        self.assertEqual(kwargs["data"]["trade"]["amount"], 0.4)
+
+    def test_notify_unknown_peer_is_a_clean_failure(self):
+        self.network.send_request = Mock()
+        self.assertFalse(asyncio.run(self.integration.notify_trade_completion("ghost", "m1", self.match)))
+        self.network.send_request.assert_not_called()
+
+
 class TestGridSettlement(unittest.TestCase):
     def setUp(self):
         self.manager = make_manager(PiDevice("pi1", "10.0.0.1", True, "prosumer-pi-1"))

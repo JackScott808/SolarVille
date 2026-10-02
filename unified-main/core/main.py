@@ -53,9 +53,11 @@ class SolarVille:
         self._loop_thread = None
         self._interrupted = False
         self.plot_options = {}
+        self.bind_host = "0.0.0.0"
         
     def initialize(self, config_path: str = None, device_name: str = None, mock: bool = False,
-                   plot_live: bool = True, plot_dir: str = "output", plot_theme: str = "light"):
+                   plot_live: bool = True, plot_dir: str = "output", plot_theme: str = "light",
+                   bind_host: str = "0.0.0.0"):
         """Initialize all system components"""
         try:
             # Load configuration
@@ -84,6 +86,7 @@ class SolarVille:
 
             logging.info(f"Running as: {self.device.name} ({'prosumer' if self.device.is_prosumer else 'consumer'})")
 
+            self.bind_host = bind_host
             self.plot_options = {"live": plot_live, "output_dir": plot_dir, "theme": plot_theme}
 
             # Initialize components based on device role
@@ -208,7 +211,7 @@ class SolarVille:
     def _start_networking(self):
         """Start the peer-facing server and the background trade processing loop."""
         try:
-            self.server.start()
+            self.server.start(host=self.bind_host)
         except Exception as e:
             # Not fatal: the node can still simulate, it just can't receive peer trades
             logging.warning(f"Server failed to start, continuing without peer connectivity: {e}")
@@ -384,6 +387,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--config', type=str, default=str(ROOT / 'config'), help='Path to configuration directory')
     parser.add_argument('--mock', action='store_true', help='Run in mock mode (required on non-Pi hardware)')
     parser.add_argument('--device', type=str, help='Device name to simulate (e.g., pi1, pi2). Overrides hostname matching.')
+    parser.add_argument('--bind', type=str, default='0.0.0.0',
+                        help='Address the server listens on (default 0.0.0.0). Use a device address, e.g. 127.0.0.2, '
+                             'to run several nodes on one machine')
     parser.add_argument('--no-plot', action='store_true', help='Do not open the live plot window (the plot is still saved)')
     parser.add_argument('--plot-dir', type=str, default='output', help='Directory for the saved plot and CSV (default: output)')
     parser.add_argument('--plot-theme', choices=['light', 'dark'], default='light', help='Plot colour theme')
@@ -396,7 +402,8 @@ def main():
     # Create and initialize SolarVille
     solarville = SolarVille()
     if not solarville.initialize(args.config, args.device, args.mock,
-                              plot_live=not args.no_plot, plot_dir=args.plot_dir, plot_theme=args.plot_theme):
+                              plot_live=not args.no_plot, plot_dir=args.plot_dir, plot_theme=args.plot_theme,
+                              bind_host=args.bind):
         sys.exit(1)
 
     # Start simulation

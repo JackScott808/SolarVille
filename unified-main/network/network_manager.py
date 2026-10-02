@@ -332,6 +332,15 @@ class NetworkManager:
         if critical:
             raise exception_class(error_msg)
     
+    def get_device_by_name(self, name: str) -> Optional[PiDevice]:
+        """
+        Look up a configured device by name (e.g. "pi2").
+
+        Returns:
+            The device, or None if no device has that name
+        """
+        return self.config.devices.get(name)
+
     def get_online_peers(self) -> List[PiDevice]:
         """
         Get list of currently online peers.
