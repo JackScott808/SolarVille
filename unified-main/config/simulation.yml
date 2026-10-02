@@ -10,6 +10,7 @@ simulation:
   simulation_speed: 300  # 300x speedup (5 min real time = 1 day simulated)
   interval_seconds: 1800  # Data interval: 1800s = 30 minutes
   log_level: INFO
+  solar_scale_factor: 1000  # scale up the tiny table-top panel output to household scale
 
 hardware:
   mock_mode: true  # Run in mock mode without real hardware

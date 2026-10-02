@@ -4,6 +4,7 @@
 Handles network communication for trade offers, requests, and notifications.
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, Optional
 
@@ -45,7 +46,10 @@ class TradingIntegration:
             }
             
             # Broadcast to all peers
-            responses = self.network.broadcast(
+            # broadcast() does blocking HTTP; keep it off the event loop so an
+            # unreachable peer can't stall all trade processing
+            responses = await asyncio.to_thread(
+                self.network.broadcast,
                 endpoint="/trade/offer",
                 data=data
             )
@@ -79,7 +83,8 @@ class TradingIntegration:
             }
             
             # Broadcast to all peers
-            responses = self.network.broadcast(
+            responses = await asyncio.to_thread(
+                self.network.broadcast,
                 endpoint="/trade/request",
                 data=data
             )
@@ -120,7 +125,8 @@ class TradingIntegration:
                 return False
                 
             # Send notification
-            response = self.network.send_request(
+            response = await asyncio.to_thread(
+                self.network.send_request,
                 peer=peer,
                 endpoint="/trade/completion",
                 method="POST",

@@ -8,5 +8,6 @@ def setup_logging(log_level: Optional[str] = None) -> None:
     level = getattr(logging, log_level or 'INFO')
     logging.basicConfig(
         level=level,
-        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+        force=True  # without this, basicConfig is a no-op once any import has configured the root logger
     )

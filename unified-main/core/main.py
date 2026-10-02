@@ -3,8 +3,10 @@
 
 #!/usr/bin/env python3
 import argparse
+import asyncio
 import logging
 import sys
+import threading
 from pathlib import Path
 
 # Core imports
@@ -37,13 +39,19 @@ class SolarVille:
         self.config = None
         self.device = None
         self.components = {}
+        self.server = None
+        self._loop = None          # asyncio loop that runs trading in the background
+        self._loop_thread = None
         
-    def initialize(self, config_path: str = None, device_name: str = None):
+    def initialize(self, config_path: str = None, device_name: str = None, mock: bool = False):
         """Initialize all system components"""
         try:
             # Load configuration
             self.config = ConfigManager(config_path)
             self.config.load_config()
+            if mock:
+                self.config.sim_config.mock_mode = True
+                self.config.hardware_config.mock_mode = True
 
             # Set up logging
             setup_logging(self.config.sim_config.log_level)
@@ -51,11 +59,10 @@ class SolarVille:
             # Get local device
             if device_name:
                 # Use specified device
-                if device_name in self.config.devices:
-                    self.device = self.config.devices[device_name]
-                    logging.info(f"Using specified device: {device_name}")
-                else:
-                    raise ValueError(f"Device '{device_name}' not found in config. Available: {list(self.config.devices.keys())}")
+                # set_local_device also makes every other component (trading,
+                # network, server) agree on which device this process is
+                self.device = self.config.set_local_device(device_name)
+                logging.info(f"Using specified device: {device_name}")
             else:
                 # Auto-detect device
                 self.device = self.config.get_local_device()
@@ -103,6 +110,9 @@ class SolarVille:
                     'capacitor_manager': CapacitorManager(mock_mode=self.config.sim_config.mock_mode)
                 })
 
+            # HTTP server so peers can send us offers, requests and notifications
+            self.server = Server(self.config, self.components['trading_manager'])
+
             logging.info(f"Initialized components for {'prosumer' if self.device.is_prosumer else 'consumer'}")
 
         except Exception as e:
@@ -139,6 +149,8 @@ class SolarVille:
             # Start visualization (optional)
             # self.components['vis_manager'].start(data)
 
+            self._start_networking()
+
             # Start main simulation loop
             self._run_simulation(data)
 
@@ -148,6 +160,23 @@ class SolarVille:
             logging.error(f"Simulation error: {e}", exc_info=True)
         finally:
             self.cleanup()
+
+    def _start_networking(self):
+        """Start the peer-facing server and the background trade processing loop."""
+        try:
+            self.server.start()
+        except Exception as e:
+            # Not fatal: the node can still simulate, it just can't receive peer trades
+            logging.warning(f"Server failed to start, continuing without peer connectivity: {e}")
+
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
+        self._run_async(self.components['trading_manager'].start_processing())
+
+    def _run_async(self, coro, timeout: float = 10.0):
+        """Run a coroutine on the background trading loop and wait for its result."""
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
 
     def _run_simulation(self, data):
         """
@@ -191,8 +220,9 @@ class SolarVille:
 
                     # Get readings from hardware managers
                     solar_data = solar_manager.get_readings()
-                    solar_energy = solar_data['solar_energy']  # kWh
-                    solar_power = solar_data['solar_power']    # W
+                    scale = sim_config.solar_scale_factor
+                    solar_energy = solar_data['solar_energy'] * scale  # kWh
+                    solar_power = solar_data['solar_power'] * scale    # W
 
                     storage_level = capacitor_manager.get_soc() * 100  # Convert to percentage
 
@@ -224,7 +254,7 @@ class SolarVille:
                     # Trading logic for prosumer
                     if reading.balance > 0.1:  # Surplus > 0.1 kWh
                         logging.info(f"Prosumer surplus: {reading.balance:.3f} kWh - creating trade offer")
-                        # TODO: Create trade offer
+                        self._run_async(trading_manager.create_offer(reading.balance))
 
                 else:
                     # Consumer reading
@@ -237,7 +267,7 @@ class SolarVille:
                     # Trading logic for consumer
                     if reading.balance < -0.1:  # Deficit > 0.1 kWh
                         logging.info(f"Consumer deficit: {abs(reading.balance):.3f} kWh - creating trade request")
-                        # TODO: Create trade request
+                        self._run_async(trading_manager.create_request(abs(reading.balance)))
 
                 # Log current state every few readings
                 if idx % 1 == 0:
@@ -247,11 +277,15 @@ class SolarVille:
                     print(log_msg, flush=True)  # Print to stdout
                     logging.info(log_msg)
 
-                # Update LCD (if not mock mode)
+                # Update LCD (LCDManager just logs in mock mode)
                 lcd = self.components.get('lcd')
-                if lcd and not sim_config.mock_mode:
-                    # TODO: Update LCD with current reading
-                    pass
+                if lcd:
+                    if self.device.is_prosumer:
+                        lcd.display(f"Bat:{reading.storage_level:.0f}% Gen:{reading.solar_power:.1f}W",
+                                    f"Bal:{reading.balance:+.3f}kWh")
+                    else:
+                        lcd.display(f"Demand:{reading.demand:.3f}kWh",
+                                    f"Bal:{reading.balance:+.3f}kWh")
 
                 # Update visualization
                 # vis_manager = self.components.get('vis_manager')
@@ -269,6 +303,19 @@ class SolarVille:
     def cleanup(self):
         """Cleanup resources"""
         logging.info("Cleaning up...")
+        if self._loop is not None:
+            try:
+                self._run_async(self.components['trading_manager'].stop_processing(), timeout=5.0)
+            except Exception as e:
+                logging.warning(f"Trade processing did not stop cleanly ({type(e).__name__}); an unreachable peer may still be being contacted")
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._loop_thread.join(timeout=5.0)
+            self._loop = None
+        if self.server is not None:
+            try:
+                self.server.stop()
+            except Exception as e:
+                logging.error(f"Error stopping server: {e}")
         for component in self.components.values():
             if hasattr(component, 'cleanup'):
                 try:
@@ -290,7 +337,7 @@ def main():
 
     # Create and initialize SolarVille
     solarville = SolarVille()
-    if not solarville.initialize(args.config, args.device):
+    if not solarville.initialize(args.config, args.device, args.mock):
         sys.exit(1)
 
     # Start simulation

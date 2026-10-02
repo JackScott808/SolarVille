@@ -29,6 +29,9 @@ class SimulationConfig:
     interval_seconds: int = 1800  # 30 minutes in seconds
     log_level: str = "INFO"
     mock_mode: bool = True
+    # Real/mock solar output is tiny next to household demand; this scales the
+    # generated energy up so a table-top panel can meaningfully power a "house".
+    solar_scale_factor: float = 1000.0
 
 @dataclass
 class HardwareConfig:
@@ -57,6 +60,7 @@ class ConfigManager:
         self.sim_config = self.simulation_config  # Alias for convenience
         self.hardware_config = HardwareConfig()
         self.devices: Dict[str, PiDevice] = {}
+        self._local_device_name: Optional[str] = None  # explicit override (e.g. --device)
 
         # Use constants for these values
         self.server_port = DEFAULT_PORT
@@ -130,12 +134,22 @@ class ConfigManager:
         except Exception as e:
             raise ConfigurationError(f"Error loading network topology: {e}")
     
+    def set_local_device(self, name: str) -> PiDevice:
+        """Explicitly choose the local device, overriding hostname matching."""
+        if name not in self.devices:
+            raise ValueError(f"Device '{name}' not found in config. Available: {list(self.devices.keys())}")
+        self._local_device_name = name
+        return self.devices[name]
+
     def get_local_device(self) -> Optional[PiDevice]:
         """
-        Get the local device based on hostname.
+        Get the local device: the explicit override if set, otherwise based on hostname.
         In mock mode, returns first device if hostname doesn't match.
         """
         import socket
+
+        if self._local_device_name:
+            return self.devices.get(self._local_device_name)
         hostname = socket.gethostname()
 
         # Try exact match first
