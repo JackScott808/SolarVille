@@ -9,6 +9,12 @@ import sys
 import threading
 from pathlib import Path
 
+# Make `core`, `network`, ... importable however this file is launched
+# (python core/main.py, from any directory, without setting PYTHONPATH)
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 # Core imports
 from core.config import ConfigManager
 from core.device_types import PiDevice
@@ -144,8 +150,13 @@ class SolarVille:
             from simulation.data_analysis import calculate_end_date
             end_date = calculate_end_date(sim_config.start_date, sim_config.timescale)
 
+            # Relative dataset paths in simulation.yml are relative to unified-main/
+            file_path = Path(sim_config.file_path)
+            if not file_path.is_absolute() and not file_path.exists():
+                file_path = ROOT / file_path
+
             data = load_data(
-                file_path=sim_config.file_path,
+                file_path=str(file_path),
                 household=getattr(sim_config, 'household', 'MAC000002'),
                 start_date=sim_config.start_date,
                 end_date=end_date.strftime("%Y-%m-%d")
@@ -349,7 +360,7 @@ class SolarVille:
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='SolarVille Smart Grid Simulation')
-    parser.add_argument('--config', type=str, default='config', help='Path to configuration directory')
+    parser.add_argument('--config', type=str, default=str(ROOT / 'config'), help='Path to configuration directory')
     parser.add_argument('--mock', action='store_true', help='Run in mock mode (required on non-Pi hardware)')
     parser.add_argument('--device', type=str, help='Device name to simulate (e.g., pi1, pi2). Overrides hostname matching.')
     parser.add_argument('--no-plot', action='store_true', help='Do not open the live plot window (the plot is still saved)')

@@ -44,9 +44,9 @@ headless run still gets the plot. Colours follow the entity (demand blue, genera
 money violet) and were validated for colour-blind separation and contrast.
 
 ```bash
-PYTHONPATH=$(pwd) python3 core/main.py --mock --device pi1                 # live window; stays open at the end
-PYTHONPATH=$(pwd) python3 core/main.py --mock --device pi1 --no-plot       # file only
-PYTHONPATH=$(pwd) python3 core/main.py --mock --device pi1 --plot-theme dark --plot-dir results
+python3 core/main.py --mock --device pi1                 # live window; stays open at the end
+python3 core/main.py --mock --device pi1 --no-plot       # file only
+python3 core/main.py --mock --device pi1 --plot-theme dark --plot-dir results
 ```
 
 ## Still to do
@@ -65,7 +65,7 @@ PYTHONPATH=$(pwd) python3 core/main.py --mock --device pi1 --plot-theme dark --p
 
 ```bash
 cd unified-main
-PYTHONPATH=$(pwd) python3 core/main.py --mock --device pi1   # prosumer
-PYTHONPATH=$(pwd) python3 core/main.py --mock --device pi2   # consumer
-PYTHONPATH=$(pwd) python3 -m unittest discover -s tests      # tests
+python3 core/main.py --mock --device pi1   # prosumer
+python3 core/main.py --mock --device pi2   # consumer
+python3 -m unittest discover -s tests      # tests
 ```
