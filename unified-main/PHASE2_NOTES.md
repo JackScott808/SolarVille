@@ -38,24 +38,27 @@ Fixes found while doing this:
 
 ## Realistic solar generation (London)
 
-Mock-mode prosumers no longer use random numbers. `simulation/solar_model.py` models a rooftop PV system
-(`prosumer:` section of `config/simulation.yml`: size, tilt, direction, location, battery size):
+Mock-mode prosumers no longer use random numbers (`prosumer:` section of `config/simulation.yml`: size, tilt,
+direction, location, battery size). Two sources, chosen per timestamp by `solar_source: auto`:
 
-- **Time of day and year**: sun position from latitude and date (sunrise/sunset match London's real times),
-  Haurwitz clear-sky irradiance, Erbs beam/diffuse split, projected onto the tilted panel. Result for 4 kWp:
-  ~3.4 MWh/year (850 kWh/kWp, typical UK range 800-950), June about 7x December.
-- **Weather**: monthly average cloudiness for London, plus day-to-day and passing-cloud variation. It is
-  deterministic per date, so every node and every re-run sees the same sky.
-- **Real data (optional, recommended)**: `python3 scripts/fetch_pvgis.py --year 2012` (and 2013, the dataset
-  spans Oct 2012 - Feb 2014) downloads actual hourly PV output for London from PVGIS into `dataset/`. With
-  `solar_source: auto` the simulation then uses the real weather of the simulated date, falling back to the model
-  for dates not covered.
+1. **Real PVGIS data** (`dataset/pvgis_*.csv`, fetched with `scripts/fetch_pvgis.py`): actual hourly PV output
+   for London from PVGIS-SARAH2, currently 2012-2014, which covers the whole demand dataset (Oct 2012 - Feb 2014).
+   Values are interpolated between PVGIS's samples (stamped at HH:10 UTC) and scaled to `system_kwp`.
+2. **A physical model** (`simulation/solar_model.py`) for dates the files don't cover: sun position from
+   latitude and date, Haurwitz clear-sky irradiance, Erbs beam/diffuse split, tilted panel, monthly average
+   cloudiness plus day-to-day and passing-cloud variation. Weather is deterministic per date, so all nodes agree.
+
+Validation against the real files (tests in `tests/test_solar_model.py`):
+
+- The files parse completely (26,304 hours, none missing over the dataset period).
+- The model's sun position matches PVGIS's own sun-height column to ~0.1 degrees, which also confirms the
+  timestamps are UTC.
+- The model was **calibrated on** the real data, so these agreements are by construction, not independent proof:
+  annual yield ~985 vs 998 kWh/kWp (within ~1.5%), every month within ~8%, and the spread of daily output
+  (best/typical/gloomy days, winter and summer) matches. Only three real years were used, so months can still be
+  ~10-15% off against a longer record.
+- Real seasonal contrast is smaller than one might guess: July yields ~3.3x December, not 7x.
 - Timestamps are treated as UTC/GMT.
-
-Caveats: the monthly London figures in the model are approximate typical-year values, not copied from a specific
-dataset, and the fetch script and PVGIS parser were written to PVGIS's documented CSV format but have **not**
-been run against the live service (it was unreachable from the development sandbox). If the first fetch fails or
-the parse skips the file, the simulation keeps working on the model; please report it.
 
 ## Plotting
 

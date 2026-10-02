@@ -13,6 +13,7 @@ in the same colours as the lines it is derived from.
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.dates as mdates
+from matplotlib.ticker import FormatStrFormatter
 
 THEMES = {
     "light": {
@@ -140,6 +141,8 @@ class EnergyFigure:
         lo, hi = min(money), max(money)
         pad = max((hi - lo) * 0.2, 0.05)
         ax.set_ylim(lo - pad, hi + pad)
+        ax.ticklabel_format(axis="y", useOffset=False)  # plain £ values, not matplotlib's "+1e2" offset
+        ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
 
         last = self.axes[list(self.axes)[-1]]
         _x_axis(last, self.timescale)

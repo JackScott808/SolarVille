@@ -17,8 +17,9 @@ Two sources, one interface (``energy_kwh(timestamp, interval_seconds)``):
     the model automatically when a file covering the simulated date is present.
 
 Timestamps are treated as UTC (GMT). The model's accuracy is that of a clear-sky + climatology
-model: right shape and the right order of magnitude (about 3.6 MWh/year for 4 kWp), not a
-forecast of any particular day. Use PVGIS data when you need the real weather.
+model, checked against real PVGIS data for London: the annual total is within ~2% (about 3.9 MWh/year
+for 4 kWp) and the monthly shape within ~15%, but it is not a forecast of any particular day.
+Use PVGIS data when you need the real weather.
 """
 
 import calendar
@@ -37,13 +38,15 @@ logger = logging.getLogger(__name__)
 
 SOLAR_CONSTANT = 1361.0  # W/m2
 
-# Mean daily global horizontal irradiation for London, kWh/m2/day, by month.
-# APPROXIMATE typical-year values (about 990 kWh/m2/year), consistent with published UK
-# climatology but not copied from a specific dataset. Replace by real PVGIS data for accuracy.
-LONDON_MEAN_DAILY_GHI = (0.65, 1.25, 2.25, 3.6, 4.7, 5.0, 4.9, 4.1, 2.9, 1.7, 0.85, 0.5)
+# Mean daily global horizontal irradiation for London, kWh/m2/day, by month (about 1030 kWh/m2/year).
+# FITTED so that this model's monthly energy matches real PVGIS-SARAH2 output for London in
+# 2012-2014 (scripts/fetch_pvgis.py), i.e. a three-year climatology: good, but three years is
+# a small sample, so individual months can be off by ~10-15% against a longer record.
+LONDON_MEAN_DAILY_GHI = (0.88, 1.58, 2.56, 3.76, 4.12, 4.69, 5.01, 4.34, 3.15, 1.90, 1.10, 0.80)
 
-DAY_VARIABILITY = 2.5  # Beta concentration for day-to-day clearness: lower = more extreme days
-PERFORMANCE_RATIO = 0.80  # inverter, wiring, temperature and soiling losses
+DAY_VARIABILITY = 3.5  # Beta concentration for day-to-day clearness: lower = more extreme days.
+#                        Chosen so the spread of daily output matches the real 2012-2014 data.
+PERFORMANCE_RATIO = 0.86  # 14% system losses: PVGIS's default, which scripts/fetch_pvgis.py also uses
 ALBEDO = 0.2
 
 
@@ -202,7 +205,12 @@ _DATA_LINE = re.compile(r"^(\d{8}):(\d{4}),")
 
 
 class PvgisSeries:
-    """Hourly PV output from a PVGIS ``seriescalc`` CSV (generated for 1 kWp), scaled to the system size."""
+    """Hourly PV output from a PVGIS ``seriescalc`` CSV (generated for 1 kWp), scaled to the system size.
+
+    PVGIS stamps each value at 10 minutes past the hour (UTC) and the stamp is the instant it
+    describes (its sun-height column agrees with the sun's position at HH:10 to ~0.1 degrees),
+    so values are interpolated in time rather than held for the whole hour.
+    """
 
     def __init__(self, hourly_w_per_kwp: Dict[Tuple[int, int, int, int], float], system_kwp: float,
                  source: str = "PVGIS"):
@@ -244,12 +252,27 @@ class PvgisSeries:
             raise ValueError("no PVGIS data rows found")
         return out
 
+    @staticmethod
+    def _key(ts: datetime) -> Tuple[int, int, int, int]:
+        return (ts.year, ts.month, ts.day, ts.hour)
+
     def covers(self, ts: datetime) -> bool:
-        return (ts.year, ts.month, ts.day, ts.hour) in self._hourly
+        base = self._sample_before(ts)
+        return self._key(base) in self._hourly or self._key(base + timedelta(hours=1)) in self._hourly
+
+    @staticmethod
+    def _sample_before(ts: datetime) -> datetime:
+        """The latest sample time (HH:10) at or before ts."""
+        base = ts.replace(minute=10, second=0, microsecond=0)
+        return base - timedelta(hours=1) if ts < base else base
 
     def power_kw(self, ts: datetime) -> float:
-        w = self._hourly.get((ts.year, ts.month, ts.day, ts.hour), 0.0)
-        return w / 1000 * self.system_kwp
+        """Power at ts, interpolating between the instantaneous samples PVGIS stamps at HH:10."""
+        base = self._sample_before(ts)
+        frac = (ts - base).total_seconds() / 3600
+        w0 = self._hourly.get(self._key(base), 0.0)
+        w1 = self._hourly.get(self._key(base + timedelta(hours=1)), 0.0)
+        return (w0 + (w1 - w0) * frac) / 1000 * self.system_kwp
 
     def energy_kwh(self, ts: datetime, interval_seconds: float = 1800) -> float:
         return _integrate(self.power_kw, ts, interval_seconds)
