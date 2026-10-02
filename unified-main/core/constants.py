@@ -2,7 +2,9 @@
 # File: constants.py
 
 # Network Constants
-DEFAULT_PORT = 5000
+# Every device's server listens on this port (override with `port:` in network_topology.yml or --port).
+# Not 5000: on macOS the AirPlay Receiver service holds 5000 on all interfaces.
+DEFAULT_PORT = 5050
 RETRY_ATTEMPTS = 3
 TIMEOUT_SECONDS = 5
 

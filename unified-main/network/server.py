@@ -7,6 +7,8 @@ Supports multi-peer architecture with routes for energy data, trading, and netwo
 """
 
 import logging
+import os
+import socket
 import threading
 import time
 import asyncio
@@ -508,6 +510,10 @@ class Server:
         # Use configured port if none specified
         if port is None:
             port = self.config.server_port
+
+        # Fail loudly if the port is taken. Flask reports "address in use" by exiting its thread
+        # silently, which would otherwise leave us believing the server is up.
+        self._check_port_free(host, port)
             
         # Start in a background thread
         self.is_running = True
@@ -522,11 +528,29 @@ class Server:
         time.sleep(0.5)
         
         # Check if server started successfully
-        if not self.is_running:
-            raise ServerError("Failed to start server")
+        if not self.is_running or not self.server_thread.is_alive():
+            self.is_running = False
+            raise ServerError(f"Failed to start server on {host}:{port}")
             
         self.logger.info(f"Server started on {host}:{port}")
     
+    @staticmethod
+    def _check_port_free(host: str, port: int) -> None:
+        """Raise ServerError, with advice, if something is already listening on host:port."""
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if os.name != "nt":  # same address-reuse rules Flask's server uses (not on Windows: unsafe there)
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+        except OSError as e:
+            hint = ("Another program is using that port. Choose a different one with --port "
+                    "(or `port:` in network_topology.yml); it must be the same on every device.")
+            if port == 5000:
+                hint += " On macOS, port 5000 is used by the AirPlay Receiver service."
+            raise ServerError(f"Cannot listen on {host}:{port} ({e}). {hint}") from e
+        finally:
+            probe.close()
+
     def _run_server(self, host: str, port: int) -> None:
         """
         Run the Flask server.
@@ -537,7 +561,7 @@ class Server:
         """
         try:
             self.app.run(host=host, port=port, debug=False, use_reloader=False)
-        except Exception as e:
+        except (Exception, SystemExit) as e:  # Flask's runner calls sys.exit() when it cannot bind
             self.logger.error(f"Server error: {str(e)}")
             self.is_running = False
     

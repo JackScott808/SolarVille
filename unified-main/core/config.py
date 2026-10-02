@@ -143,6 +143,10 @@ class ConfigManager:
             with open(topology_path, 'r') as f:
                 data = yaml.safe_load(f)
             
+            # Optional server port, the same on every device
+            if 'port' in data:
+                self.set_server_port(data['port'])
+
             # Load devices
             devices_data = data.get('devices', {})
             self.devices = {
@@ -155,6 +159,16 @@ class ConfigManager:
         except Exception as e:
             raise ConfigurationError(f"Error loading network topology: {e}")
     
+    def set_server_port(self, port) -> None:
+        """Set the TCP port the devices' servers use (1024-65535). All devices must use the same one."""
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            raise ConfigurationError(f"Invalid server port: {port!r}")
+        if not (1024 <= port <= 65535):
+            raise ConfigurationError(f"Invalid server port: {port} (use 1024-65535)")
+        self.server_port = port
+
     def set_local_device(self, name: str) -> PiDevice:
         """Explicitly choose the local device, overriding hostname matching."""
         if name not in self.devices:

@@ -72,6 +72,7 @@ The simulated days available depend on the dataset: household MAC000002 has data
 | `--mock` | Force mock mode (generated hardware readings). `mock_mode: true` in `simulation.yml` has the same effect and is the default. |
 | `--standalone` | Do not wait for the other devices before starting. Use this for single-node runs. |
 | `--sync-timeout SECONDS` | How long to wait for the other devices before simulating alone (default 20) |
+| `--port PORT` | TCP port the devices' servers use (default 5050, or `port:` in `network_topology.yml`). Must be the same on every device. |
 | `--bind ADDRESS` | Address the device's server listens on (default `0.0.0.0`) |
 | `--no-plot` | Do not open the live plot window; the plot is still saved |
 | `--plot-dir DIR` | Where to save the plot and CSV (default `output/`) |
@@ -100,8 +101,8 @@ Timestamps in the data are treated as UTC.
 
 ### `config/network_topology.yml`
 
-Lists the devices: name, IP address, whether it is a prosumer, and hostname. The first device is the leader that
-starts the others together. Without `--device`, a device identifies itself by matching its hostname against this
+Lists the devices: name, IP address, whether it is a prosumer, and hostname, plus the TCP `port` every device's
+server uses (default 5050). The first device is the leader that starts the others together. Without `--device`, a device identifies itself by matching its hostname against this
 list (in mock mode it falls back to the first device).
 
 ## How it works
@@ -151,7 +152,8 @@ This starts a prosumer (`pi1`) and a consumer (`pi2`) as separate processes on a
 seconds late on purpose, then checks the logs and saved data: that the devices stayed in step, that both recorded
 the same trades in every interval, that every trade was priced between the grid prices, and that the final
 balances can be recomputed from the energy flows. On macOS, run `sudo ifconfig lo0 alias 127.0.0.2` once
-first, because only `127.0.0.1` exists by default.
+first, because only `127.0.0.1` exists by default. The script uses port 5050; pick another with
+`PORT=5051 scripts/two_nodes.sh`.
 
 On separate machines, put each device's real IP address in `config/network_topology.yml` on all of them, then
 run on each:
@@ -161,7 +163,18 @@ python core/main.py --device pi1      # on the first machine
 python core/main.py --device pi2      # on the second machine
 ```
 
-Start them within `--sync-timeout` seconds of each other. Port 5000 must be reachable between them.
+Start them within `--sync-timeout` seconds of each other. The port (5050 by default) must be reachable between them.
+
+## Troubleshooting
+
+**"Address already in use" or "Cannot listen on ...:PORT".** Another program is using the port. The default is 5050
+because macOS's AirPlay Receiver service listens on 5000, which breaks anything that tries to use it. Find what is
+using a port with `lsof -nP -iTCP:5050 -sTCP:LISTEN`, then either stop it or choose another port with
+`--port` (or `port:` in `network_topology.yml`; all devices must agree). A device whose server cannot start says so
+and runs on its own.
+
+**`scripts/two_nodes.sh` says an address cannot be used.** It tests `127.0.0.1` and `127.0.0.2` separately. If only
+`127.0.0.2` fails, run `sudo ifconfig lo0 alias 127.0.0.2` (macOS). If both fail, the port is taken; see above.
 
 ## Tests
 

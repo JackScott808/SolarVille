@@ -60,12 +60,15 @@ class SolarVille:
         
     def initialize(self, config_path: str = None, device_name: str = None, mock: bool = False,
                    plot_live: bool = True, plot_dir: str = "output", plot_theme: str = "light",
-                   bind_host: str = "0.0.0.0", standalone: bool = False, sync_timeout: float = 20.0):
+                   bind_host: str = "0.0.0.0", standalone: bool = False, sync_timeout: float = 20.0,
+                   port: int = None):
         """Initialize all system components"""
         try:
             # Load configuration
             self.config = ConfigManager(config_path)
             self.config.load_config()
+            if port is not None:
+                self.config.set_server_port(port)
             if mock:
                 self.config.sim_config.mock_mode = True
                 self.config.hardware_config.mock_mode = True
@@ -221,8 +224,11 @@ class SolarVille:
         try:
             self.server.start(host=self.bind_host)
         except Exception as e:
-            # Not fatal: the node can still simulate, it just can't receive peer trades
-            logging.warning(f"Server failed to start, continuing without peer connectivity: {e}")
+            # Not fatal: the node can still simulate, it just can't receive peer trades. It can't take
+            # part in the start barrier either, so don't wait for peers that can't reach it.
+            logging.error(f"Server could not start on {self.bind_host}:{self.config.server_port}: {e}")
+            logging.warning("Continuing without peer connectivity (running standalone)")
+            self.standalone = True
 
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
@@ -415,6 +421,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--bind', type=str, default='0.0.0.0',
                         help='Address the server listens on (default 0.0.0.0). Use a device address, e.g. 127.0.0.2, '
                              'to run several nodes on one machine')
+    parser.add_argument('--port', type=int, default=None,
+                        help='TCP port the devices use (default: `port` in network_topology.yml, else 5050). '
+                             'Must be the same on every device')
     parser.add_argument('--standalone', action='store_true',
                         help='Do not wait for the other devices before starting (single-node development)')
     parser.add_argument('--sync-timeout', type=float, default=20.0,
@@ -433,7 +442,7 @@ def main():
     if not solarville.initialize(args.config, args.device, args.mock,
                               plot_live=not args.no_plot, plot_dir=args.plot_dir, plot_theme=args.plot_theme,
                               bind_host=args.bind, standalone=args.standalone,
-                              sync_timeout=args.sync_timeout):
+                              sync_timeout=args.sync_timeout, port=args.port):
         sys.exit(1)
 
     # Start simulation

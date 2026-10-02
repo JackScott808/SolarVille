@@ -181,5 +181,60 @@ class TestServerEndpoints(unittest.TestCase):
         self.assertFalse(self.server.start_event.is_set())
 
 
+class TestServerPort(unittest.TestCase):
+    """The server must say so, loudly, when it cannot listen (e.g. macOS AirPlay Receiver holds port 5000)."""
+
+    def make_server(self):
+        config = Mock(spec=ConfigManager)
+        config.server_port = 5050
+        config.devices = {"pi1": PI1}
+        config.get_local_device.return_value = PI1
+        return Server(config)
+
+    def test_start_fails_clearly_when_the_port_is_taken(self):
+        import socket
+        from network.server import ServerError
+        blocker = socket.socket()
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen()
+        self.addCleanup(blocker.close)
+        port = blocker.getsockname()[1]
+        server = self.make_server()
+        with self.assertRaises(ServerError) as ctx:
+            server.start(host="127.0.0.1", port=port)
+        self.assertIn(str(port), str(ctx.exception))
+        self.assertIn("--port", str(ctx.exception))
+        self.assertFalse(server.is_running)
+
+    def test_start_succeeds_on_a_free_port_and_serves_requests(self):
+        import socket
+        import urllib.request
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        server = self.make_server()
+        server.start(host="127.0.0.1", port=port)
+        self.assertTrue(server.is_running)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/sim/ready", timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+
+    def test_macos_hint_for_port_5000(self):
+        import socket
+        from network.server import ServerError
+        blocker = socket.socket()
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            blocker.bind(("0.0.0.0", 5000))
+            blocker.listen()
+        except OSError:
+            self.skipTest("port 5000 is not available on this machine")
+        self.addCleanup(blocker.close)
+        with self.assertRaises(ServerError) as ctx:
+            self.make_server().start(host="127.0.0.1", port=5000)
+        self.assertIn("AirPlay", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

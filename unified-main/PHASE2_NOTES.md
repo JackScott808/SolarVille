@@ -117,7 +117,7 @@ scripts/two_nodes.sh [start_date] [speed] [pi2_delay]   # default: 2013-07-08 (v
 ```
 
 Runs pi1 (prosumer) and pi2 (consumer) as separate processes, each listening on its own loopback address
-(127.0.0.1 / 127.0.0.2, so both can use port 5000), then `scripts/verify_two_nodes.py` checks: the nodes stayed in
+(127.0.0.1 / 127.0.0.2, so both can use the same port, 5050 by default), then `scripts/verify_two_nodes.py` checks: the nodes stayed in
 step, sold == bought in *every interval*, same trades on both sides, every possible trade happened, every trade
 priced between the grid's export and import price, and final balances match a recomputation from the per-interval
 prices. On macOS first run `sudo ifconfig lo0 alias 127.0.0.2`. On a real network use `--bind` (default

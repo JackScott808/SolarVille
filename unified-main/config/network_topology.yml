@@ -2,6 +2,11 @@
 # File: network_topology.yml
 
 # Network topology configuration
+
+# TCP port every device's server uses; must be the same on all devices.
+# (5000 is avoided because macOS's AirPlay Receiver holds it.)
+port: 5050
+
 devices:
   pi1:
     name: pi1
