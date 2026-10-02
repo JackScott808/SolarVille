@@ -41,15 +41,19 @@ class TradeRequest:
     amount: float         # kWh wanted to buy
     max_price: float      # Maximum acceptable price per kWh
     priority: int = 0     # Priority level (higher = more urgent)
+    expiry: Optional[datetime] = None  # When this request lapses (None = never)
     
     def to_dict(self) -> Dict:
-        return {
+        data = {
             "timestamp": self.timestamp.isoformat(),
             "buyer_id": self.buyer_id,
             "amount": self.amount,
             "max_price": self.max_price,
             "priority": self.priority
         }
+        if self.expiry is not None:
+            data["expiry"] = self.expiry.isoformat()
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'TradeRequest':
@@ -58,7 +62,8 @@ class TradeRequest:
             buyer_id=data["buyer_id"],
             amount=data["amount"],
             max_price=data["max_price"],
-            priority=data.get("priority", 0)
+            priority=data.get("priority", 0),
+            expiry=datetime.fromisoformat(data["expiry"]) if data.get("expiry") else None
         )
 
 @dataclass

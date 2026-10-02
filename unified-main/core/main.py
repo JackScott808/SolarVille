@@ -33,6 +33,8 @@ from simulation.data_analysis import load_data
 from utils.logging import setup_logging
 from utils.error_handling import ErrorHandler
 
+MIN_TRADE_KWH = 0.01  # ignore surpluses/deficits smaller than this; the grid takes them
+
 class SolarVille:
     def __init__(self):
         """Initialize SolarVille system"""
@@ -42,8 +44,11 @@ class SolarVille:
         self.server = None
         self._loop = None          # asyncio loop that runs trading in the background
         self._loop_thread = None
+        self._interrupted = False
+        self.plot_options = {}
         
-    def initialize(self, config_path: str = None, device_name: str = None, mock: bool = False):
+    def initialize(self, config_path: str = None, device_name: str = None, mock: bool = False,
+                   plot_live: bool = True, plot_dir: str = "output", plot_theme: str = "light"):
         """Initialize all system components"""
         try:
             # Load configuration
@@ -72,6 +77,8 @@ class SolarVille:
 
             logging.info(f"Running as: {self.device.name} ({'prosumer' if self.device.is_prosumer else 'consumer'})")
 
+            self.plot_options = {"live": plot_live, "output_dir": plot_dir, "theme": plot_theme}
+
             # Initialize components based on device role
             self._initialize_components()
 
@@ -99,7 +106,10 @@ class SolarVille:
                 'trading_manager': TradingManager(self.config, network_manager),
                 'vis_manager': VisualisationManager(
                     self.config.sim_config.start_date,
-                    self.config.sim_config.timescale
+                    self.config.sim_config.timescale,
+                    device_name=self.device.name,
+                    is_prosumer=self.device.is_prosumer,
+                    **self.plot_options
                 )
             })
 
@@ -146,13 +156,17 @@ class SolarVille:
 
             logging.info(f"Loaded {len(data)} data points")
 
-            # Start visualization (optional)
-            # self.components['vis_manager'].start(data)
+            # Open the live plot (a no-op without a display; the plot is still saved at the end)
+            self.components['vis_manager'].start(data)
 
             self._start_networking()
 
             # Start main simulation loop
             self._run_simulation(data)
+
+            # Let the user look at the finished plot; skipped on Ctrl-C so exit is immediate
+            if not self._interrupted:
+                self.components['vis_manager'].wait_until_closed()
 
         except KeyboardInterrupt:
             logging.info("Simulation interrupted by user")
@@ -202,8 +216,9 @@ class SolarVille:
         logging.info(f"Simulation speed: {sim_config.simulation_speed}x")
         logging.info(f"Sleep time between readings: {sleep_time:.2f}s")
 
-        # Start trading manager
         trading_manager = self.components['trading_manager']
+        # Offers/requests live for one interval of real time
+        offer_ttl = max(sleep_time, 1.0)
 
         # Run simulation
         try:
@@ -251,11 +266,6 @@ class SolarVille:
                         solar_power=solar_power
                     )
 
-                    # Trading logic for prosumer
-                    if reading.balance > 0.1:  # Surplus > 0.1 kWh
-                        logging.info(f"Prosumer surplus: {reading.balance:.3f} kWh - creating trade offer")
-                        self._run_async(trading_manager.create_offer(reading.balance))
-
                 else:
                     # Consumer reading
                     reading = EnergyReading(
@@ -264,16 +274,31 @@ class SolarVille:
                         balance=-energy_demand
                     )
 
-                    # Trading logic for consumer
-                    if reading.balance < -0.1:  # Deficit > 0.1 kWh
-                        logging.info(f"Consumer deficit: {abs(reading.balance):.3f} kWh - creating trade request")
-                        self._run_async(trading_manager.create_request(abs(reading.balance)))
+                # Post this interval's surplus as an offer, or deficit as a request.
+                # They live for one interval; whatever isn't traded peer-to-peer is
+                # settled with the grid below.
+                surplus = max(reading.balance, 0.0)
+                deficit = max(-reading.balance, 0.0)
+                if surplus > MIN_TRADE_KWH:
+                    logging.info(f"Surplus: {surplus:.3f} kWh - creating trade offer")
+                    self._run_async(trading_manager.create_offer(surplus, ttl=offer_ttl))
+                if deficit > MIN_TRADE_KWH:
+                    logging.info(f"Deficit: {deficit:.3f} kWh - creating trade request")
+                    self._run_async(trading_manager.create_request(deficit, ttl=offer_ttl))
+
+                # Sleep to maintain simulation speed (peers match and settle meanwhile)
+                time.sleep(sleep_time)
+
+                trade = trading_manager.settle_interval(surplus=surplus, deficit=deficit)
 
                 # Log current state every few readings
                 if idx % 1 == 0:
                     log_msg = f"[{timestamp}] Demand: {reading.demand:.3f} kWh, Balance: {reading.balance:+.3f} kWh"
                     if self.device.is_prosumer:
                         log_msg += f", Gen: {reading.generation:.3f} kWh, SOC: {reading.storage_level:.1f}%"
+                    log_msg += (f" | P2P sold/bought: {trade['p2p_sold']:.3f}/{trade['p2p_bought']:.3f} kWh,"
+                                f" grid sold/bought: {trade['grid_sold']:.3f}/{trade['grid_bought']:.3f} kWh,"
+                                f" balance: £{trade['currency']:.2f}")
                     print(log_msg, flush=True)  # Print to stdout
                     logging.info(log_msg)
 
@@ -282,20 +307,18 @@ class SolarVille:
                 if lcd:
                     if self.device.is_prosumer:
                         lcd.display(f"Bat:{reading.storage_level:.0f}% Gen:{reading.solar_power:.1f}W",
-                                    f"Bal:{reading.balance:+.3f}kWh")
+                                    f"GBP {trade['currency']:.2f}")
                     else:
                         lcd.display(f"Demand:{reading.demand:.3f}kWh",
-                                    f"Bal:{reading.balance:+.3f}kWh")
+                                    f"GBP {trade['currency']:.2f}")
 
                 # Update visualization
-                # vis_manager = self.components.get('vis_manager')
-                # if vis_manager:
-                #     vis_manager.update(reading)
-
-                # Sleep to maintain simulation speed
-                time.sleep(sleep_time)
+                vis_manager = self.components.get('vis_manager')
+                if vis_manager:
+                    vis_manager.update(reading, **trade)
 
         except KeyboardInterrupt:
+            self._interrupted = True
             logging.info("Simulation interrupted by user")
         finally:
             logging.info("Simulation loop completed")
@@ -305,7 +328,7 @@ class SolarVille:
         logging.info("Cleaning up...")
         if self._loop is not None:
             try:
-                self._run_async(self.components['trading_manager'].stop_processing(), timeout=5.0)
+                self._run_async(self.components['trading_manager'].stop_processing(), timeout=2.0)
             except Exception as e:
                 logging.warning(f"Trade processing did not stop cleanly ({type(e).__name__}); an unreachable peer may still be being contacted")
             self._loop.call_soon_threadsafe(self._loop.stop)
@@ -329,6 +352,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--config', type=str, default='config', help='Path to configuration directory')
     parser.add_argument('--mock', action='store_true', help='Run in mock mode (required on non-Pi hardware)')
     parser.add_argument('--device', type=str, help='Device name to simulate (e.g., pi1, pi2). Overrides hostname matching.')
+    parser.add_argument('--no-plot', action='store_true', help='Do not open the live plot window (the plot is still saved)')
+    parser.add_argument('--plot-dir', type=str, default='output', help='Directory for the saved plot and CSV (default: output)')
+    parser.add_argument('--plot-theme', choices=['light', 'dark'], default='light', help='Plot colour theme')
     return parser.parse_args()
 
 def main():
@@ -337,7 +363,8 @@ def main():
 
     # Create and initialize SolarVille
     solarville = SolarVille()
-    if not solarville.initialize(args.config, args.device, args.mock):
+    if not solarville.initialize(args.config, args.device, args.mock,
+                              plot_live=not args.no_plot, plot_dir=args.plot_dir, plot_theme=args.plot_theme):
         sys.exit(1)
 
     # Start simulation

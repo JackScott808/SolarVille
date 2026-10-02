@@ -415,9 +415,12 @@ class Server:
                         "message": f"Invalid trade data: {str(e)}"
                     }), 400
                 
-                # Update trade status in trading manager
-                # For now just log it - in a full implementation we would update the status
-                self.logger.info(f"Received trade completion notification for {match_id}")
+                # Apply our side of the trade (idempotent per match id)
+                applied = self.trading_manager.handle_trade_completion(match_id, trade_match)
+                self.logger.info(
+                    f"Received trade completion notification for {match_id} "
+                    f"({'applied' if applied else 'already applied or not a party'})"
+                )
                 
                 return jsonify({"status": "success"})
                 
