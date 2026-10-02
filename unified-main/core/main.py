@@ -335,7 +335,7 @@ class SolarVille:
                 # They live for one interval; whatever isn't traded peer-to-peer is
                 # settled with the grid below.
                 surplus = max(reading.balance, 0.0)
-                deficit = max(-reading.balance, 0.0)
+                deficit = max(-reading.balance, 0.0) + 0.0  # + 0.0 turns -0.0 into 0.0
                 interval = timestamp.isoformat()  # the simulated interval these trades belong to
                 if surplus > MIN_TRADE_KWH:
                     logging.info(f"Surplus: {surplus:.3f} kWh - creating trade offer")

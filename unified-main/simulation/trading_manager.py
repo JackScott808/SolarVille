@@ -593,8 +593,8 @@ class TradingManager:
                 "sold": 0.0, "bought": 0.0, "sold_cash": 0.0, "bought_cash": 0.0}
             p2p_sold, p2p_bought = record["sold"], record["bought"]
 
-            grid_sold = max(surplus - p2p_sold, 0.0)
-            grid_bought = max(deficit - p2p_bought, 0.0)
+            grid_sold = max(surplus - p2p_sold, 0.0) + 0.0  # + 0.0 turns -0.0 into 0.0
+            grid_bought = max(deficit - p2p_bought, 0.0) + 0.0
             grid_cash = grid_sold * export_price - grid_bought * import_price
             self.currency += grid_cash
 
