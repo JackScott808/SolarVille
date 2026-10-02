@@ -26,3 +26,6 @@ python-dateutil>=2.8.0
 
 # Logging is built-in
 # Testing uses unittest (built-in)
+
+# Time zone database for the tariff's London local time (the standard library needs it on Windows)
+tzdata>=2023.3; platform_system == "Windows"

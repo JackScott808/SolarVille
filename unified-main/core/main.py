@@ -410,7 +410,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='SolarVille Smart Grid Simulation')
     parser.add_argument('--config', type=str, default=str(ROOT / 'config'), help='Path to configuration directory')
-    parser.add_argument('--mock', action='store_true', help='Run in mock mode (required on non-Pi hardware)')
+    parser.add_argument('--mock', action='store_true', help='Force mock mode (generated hardware readings); also the default in simulation.yml')
     parser.add_argument('--device', type=str, help='Device name to simulate (e.g., pi1, pi2). Overrides hostname matching.')
     parser.add_argument('--bind', type=str, default='0.0.0.0',
                         help='Address the server listens on (default 0.0.0.0). Use a device address, e.g. 127.0.0.2, '
