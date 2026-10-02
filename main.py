@@ -4,19 +4,27 @@ import pandas as pd
 from multiprocessing import Process, Queue, Event
 import threading
 import logging
-import platform
 import requests
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 from trading import calculate_price
 from dataAnalysis import load_data, calculate_end_date, update_plot_separate, update_plot_same
 from config import LOCAL_IP, PEER_IP, SOLAR_SCALE_FACTOR
-from solarMonitor import get_current_readings
-from batteryControl import update_battery_charge, read_battery_charge
-from lcdControlTest import display_message
 
-PEER_API_URL = f'http://{PEER_IP}:5000'
-LOCAL_IP_URL = f'http://{LOCAL_IP}:5000'
+try:
+    from solarMonitor import get_current_readings
+    from batteryControl import update_battery_charge, read_battery_charge
+    from lcdControlTest import display_message
+except (ImportError, NotImplementedError, RuntimeError) as e:
+    # Not running on a Raspberry Pi with the sensors attached
+    logging.warning(f"Hardware modules unavailable ({e}); using mock hardware")
+    from mock_solarMonitor import get_current_readings
+    from mock_batteryControl import update_battery_charge, read_battery_charge
+    from mock_lcdControlTest import display_message
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+PEER_API_URL = f'http://{PEER_IP}:5000' if PEER_IP else None
+LOCAL_IP_URL = 'http://127.0.0.1:5000'
+
 
 
 def process_trading_and_lcd(df, timestamp, current_data, queue):
@@ -65,15 +73,21 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
         'battery_charge': battery_soc,
         'charge_efficiency': efficiency
     }
-    make_api_call(f'{PEER_API_URL}/update_peer_data', update_data)
+    if PEER_API_URL:
+        make_api_call(f'{PEER_API_URL}/update_peer_data', update_data)
 
-    # Get peer data for trading
-    peer_data_response = requests.get(f'{LOCAL_IP_URL}/get_peer_data') # Was using wrong IP check other instances
-    if peer_data_response.status_code == 200:
+    # Get peer data for trading (peers push their data to our local server)
+    peer_data_response = None
+    if PEER_IP:
+        try:
+            peer_data_response = requests.get(f'{LOCAL_IP_URL}/get_peer_data', timeout=5)
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Failed to get peer data: {e}")
+    if peer_data_response is not None and peer_data_response.status_code == 200:
         peer_data = peer_data_response.json()
         
         # Get peer balance with error checking
-        peer_balance = peer_data.get(PEER_IP, {}).get('balance')
+        peer_balance = peer_data.get(PEER_IP, {}).get('balance') if PEER_IP else None
         if peer_balance is None:
             logging.warning(f"No balance data available for peer {PEER_IP}")
         else:
@@ -93,18 +107,18 @@ def process_trading_and_lcd(df, timestamp, current_data, queue):
                 df.loc[timestamp, 'balance'] += trade_amount / trade_duration
                 df.loc[timestamp, 'currency'] -= trade_amount * price
                 logging.info(f"Bought {trade_amount*1000:.2f} Wh at {price:.2f} $/kWh")
-    else:
+    elif PEER_IP:
         logging.error("Failed to get peer data for trading")
 
     # Update LCD display with real solar power in mW
     # To switch to displaying the scaled solar power in kWh in the future,
     # modify the display_message function to update LCD display with scaled solar power in kWh, e.g.:
-    # display_message(f"Bat:{battery_soc:.0f}% Gen:{solar_power_scaled_kwh*1000:.0f}Wh")
-    display_message(f"Bat:{battery_soc:.0f}% Gen:{solar_power_mw:.0f}mW")
+    # display_message(f"Bat:{battery_soc*100:.0f}% Gen:{solar_power_scaled_kwh*1000:.0f}Wh")
+    display_message(f"Bat:{battery_soc*100:.0f}% Gen:{solar_power_mw:.0f}mW")
     
     logging.info(
         f"At {timestamp} - Generation: {solar_power_scaled_kwh:.6f}W, "
-        f"Demand: {demand:.2f}W, Battery: {battery_soc:.2f}%, "
+        f"Demand: {demand:.2f}W, Battery: {battery_soc*100:.2f}%, "
         f"Efficiency: {efficiency:.2f}, "
         f"Balance: {df.loc[timestamp, 'balance']:.6f}W, "
         f"Currency: {df.loc[timestamp, 'currency']:.2f}, "
@@ -180,8 +194,6 @@ def start_simulation_local(args):
         queue.put("done")
         plot_process.join()
 
-# ... (rest of the main.py code remains the same)
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Smart Grid Simulation')
     parser.add_argument('--file_path', type=str, required=True, help='Path to the CSV file')
@@ -194,7 +206,7 @@ if __name__ == "__main__":
     from server import app  # Import the Flask app
     
     # Start the server and simulation in separate threads to run concurrently
-    server_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': 5000})
+    server_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': 5000}, daemon=True)
     server_thread.start()  # Start the server thread
     
     time.sleep(2)  # Give the server a moment to start
@@ -202,5 +214,4 @@ if __name__ == "__main__":
     simulation_thread = threading.Thread(target=start_simulation_local, args=(args,))
     simulation_thread.start()  # Start the simulation thread
     
-    simulation_thread.join()  # Wait for the simulation to complete
-    server_thread.join()  # Wait for the server to finish (if needed)
+    simulation_thread.join()  # Wait for the simulation to complete; the daemon server thread exits with the process

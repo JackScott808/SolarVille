@@ -1,9 +1,14 @@
-# mock_batteryControl.py
-def update_battery_charge(power_generated, power_demand):
-    # Mock update logic
-    battery_charge = min(1.0, max(0.0, (power_generated - power_demand) / 100.0))
-    print(f"Mock updated battery charge: {battery_charge * 100:.2f}%")
-    return battery_charge
+# Mock battery module for testing on non-Raspberry Pi platforms
+# Same interface as batteryControl.py
+import logging
+
+
+def update_battery_charge(solar_current, solar_power, demand):
+    # Mock update logic: returns (state of charge 0-1, charging efficiency)
+    soc = min(1.0, max(0.0, 0.5 + (solar_power - demand) / 100.0))
+    logging.info(f"Mock updated battery charge: {soc * 100:.2f}%")
+    return soc, 1.0
+
 
 def read_battery_charge():
     # Mock read logic

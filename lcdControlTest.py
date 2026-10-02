@@ -20,6 +20,4 @@ lcd = characterlcd.Character_LCD_Mono(lcd_rs, lcd_en, lcd_d4, lcd_d5, lcd_d6, lc
 
 def display_message(message):
     lcd.clear() # Clear the display
-    lcd.message = message # Display the message
-    time.sleep(5) # Display the message for 5 seconds
-    lcd.clear() # Clear the display after 5 seconds
+    lcd.message = message # Display the message (stays until the next update)

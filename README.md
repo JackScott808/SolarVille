@@ -66,6 +66,12 @@ python main.py --file_path <path_to_csv> --household <household_id> --start_date
 python main.py --file_path data/block_0.csv --household MAC000002 --start_date 2012-10-13 --timescale 'd'
 ```
 
+### Running without a Raspberry Pi
+If the Pi hardware libraries (`board`, INA219, LCD) can't be imported, `main.py` automatically falls back to the `mock_*` modules, so the simulation runs on any machine.
+
+### Peer configuration
+Two Pis trade with each other. Their IPs are set in `config.py` (`PI_1_IP`, `PI_2_IP`, or the `SOLARVILLE_PI_1_IP` / `SOLARVILLE_PI_2_IP` environment variables). To use other addresses, set `LOCAL_IP` and `PEER_IP` in the environment. If the machine matches neither Pi, it runs standalone with no trading.
+
 ## Additional Information
 
 **Raspberry Pi Specific Setup**

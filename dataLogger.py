@@ -1,14 +1,14 @@
 import csv
 from datetime import datetime
 import time
-from solarMonitor import get_current_readings, print_readings
+from solarMonitor import get_current_readings
 
 def init_csv_file():
     csv_filename = f"solar_battery_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     headers = [
         "Timestamp",
-        "Solar Bus Voltage (V)", "Solar Shunt Voltage (V)", "Solar Current (A)", "Solar Power (mW)",
-        "Battery Bus Voltage (V)", "Battery Shunt Voltage (V)", "Battery Current (A)", "Battery Power (mW)"
+        "Solar Current (A)", "Solar Power (mW)",
+        "Battery Voltage (V)", "Battery Current (A)"
     ]
     with open(csv_filename, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
@@ -28,8 +28,8 @@ def main():
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             readings = get_current_readings()
             
-            solar_data = readings['solar_current'], readings['solar_power']
-            battery_data = readings['battery_voltage'], readings['battery_current']
+            solar_data = readings['solar_current_a'], readings['solar_power_mw']
+            battery_data = readings['battery_voltage'], readings['battery_current_a']
             
             log_data(csv_filename, [
                 timestamp,
@@ -37,8 +37,9 @@ def main():
                 *battery_data
             ])
             
-            print_readings(*solar_data, "Solar")
-            print_readings(*battery_data, "Battery")
+            print(f"Solar:   {solar_data[0]*1000:.3f} mA, {solar_data[1]:.3f} mW")
+            print(f"Battery: {battery_data[0]:.3f} V, {battery_data[1]*1000:.3f} mA")
+            print("------------------------")
             
             time.sleep(3)  # Log every 3 seconds
     except KeyboardInterrupt:

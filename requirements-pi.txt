@@ -52,3 +52,4 @@ tzdata==2024.1
 urllib3==2.2.2
 Werkzeug==3.0.3
 zope.interface==6.4.post2
+netifaces
