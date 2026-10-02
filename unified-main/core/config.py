@@ -34,6 +34,17 @@ class SimulationConfig:
     solar_scale_factor: float = 1000.0
 
 @dataclass
+class ProsumerConfig:
+    """The simulated household energy system (used by prosumers in mock mode)"""
+    system_kwp: float = 4.0            # installed PV peak power; a typical UK home has 3-4 kWp
+    tilt_deg: float = 35.0             # panel tilt from horizontal
+    azimuth_deg: float = 180.0         # panel direction, clockwise from north (180 = south)
+    latitude: float = 51.5074          # London
+    longitude: float = -0.1278
+    solar_source: str = "auto"         # auto = real PVGIS data if present, else the model; model; pvgis
+    storage_capacity_kwh: float = 5.0  # a typical home battery
+
+@dataclass
 class HardwareConfig:
     """Hardware settings automatically determined by device role"""
     mock_mode: bool = True
@@ -59,6 +70,7 @@ class ConfigManager:
         self.simulation_config = SimulationConfig()
         self.sim_config = self.simulation_config  # Alias for convenience
         self.hardware_config = HardwareConfig()
+        self.prosumer_config = ProsumerConfig()
         self.devices: Dict[str, PiDevice] = {}
         self._local_device_name: Optional[str] = None  # explicit override (e.g. --device)
 
@@ -74,6 +86,7 @@ class ConfigManager:
         try:
             self._load_simulation_config()
             self._load_network_topology()
+            self._validate_prosumer()
 
             # Configure hardware based on local device role
             local_device = self.get_local_device()
@@ -105,6 +118,9 @@ class ConfigManager:
             sim_data = data.get('simulation', {})
             self.simulation_config = SimulationConfig(**sim_data)
             self.sim_config = self.simulation_config  # Update alias
+
+            if 'prosumer' in data:
+                self.prosumer_config = ProsumerConfig(**data['prosumer'])
 
             # Update mock mode if specified
             if 'hardware' in data and 'mock_mode' in data['hardware']:
@@ -244,6 +260,22 @@ class ConfigManager:
         # Check if data file exists
         if not os.path.exists(self.simulation_config.file_path):
             raise ConfigurationError(f"Data file not found: {self.simulation_config.file_path}")
+
+    def _validate_prosumer(self) -> None:
+        """Validate the household energy system settings"""
+        p = self.prosumer_config
+        if p.system_kwp <= 0:
+            raise ConfigurationError("prosumer.system_kwp must be positive")
+        if not (0 <= p.tilt_deg <= 90):
+            raise ConfigurationError("prosumer.tilt_deg must be between 0 and 90")
+        if not (0 <= p.azimuth_deg <= 360):
+            raise ConfigurationError("prosumer.azimuth_deg must be between 0 and 360")
+        if not (-90 <= p.latitude <= 90 and -180 <= p.longitude <= 180):
+            raise ConfigurationError("prosumer.latitude/longitude out of range")
+        if p.solar_source not in ("auto", "model", "pvgis"):
+            raise ConfigurationError("prosumer.solar_source must be auto, model or pvgis")
+        if p.storage_capacity_kwh <= 0:
+            raise ConfigurationError("prosumer.storage_capacity_kwh must be positive")
 
     def _validate_network(self) -> None:
         """Validate network configuration"""

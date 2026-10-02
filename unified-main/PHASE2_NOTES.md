@@ -16,8 +16,9 @@ Fixes found while doing this:
   override global.
 - `TradingIntegration` called blocking `requests` code inside the event loop, so one unreachable peer froze all
   trading. Those calls now run via `asyncio.to_thread`.
-- Mock solar output (~0.0005 kWh/step) never beat demand (~0.18 kWh/step), so a prosumer never had a surplus.
-  `simulation.solar_scale_factor` (default 1000, as in the old `SOLAR_SCALE_FACTOR`) scales it up.
+- Mock solar output (~0.0005 kWh/step, random) never beat demand (~0.18 kWh/step), so a prosumer never had a
+  surplus. Replaced by the London solar model below; `simulation.solar_scale_factor` now only applies to real
+  hardware (a table-top panel standing in for a house).
 - `setup_logging` used `basicConfig` without `force=True`, which is a no-op once any import has configured the
   root logger, so the configured log level never applied.
 - `--mock` was parsed but ignored; it now forces mock mode.
@@ -34,6 +35,27 @@ Fixes found while doing this:
   `settle_interval()` then sells whatever surplus wasn't traded to the grid at `grid_sell_price` and buys
   whatever deficit wasn't covered at `grid_buy_price`.
 - Prosumers with a deficit request energy too.
+
+## Realistic solar generation (London)
+
+Mock-mode prosumers no longer use random numbers. `simulation/solar_model.py` models a rooftop PV system
+(`prosumer:` section of `config/simulation.yml`: size, tilt, direction, location, battery size):
+
+- **Time of day and year**: sun position from latitude and date (sunrise/sunset match London's real times),
+  Haurwitz clear-sky irradiance, Erbs beam/diffuse split, projected onto the tilted panel. Result for 4 kWp:
+  ~3.4 MWh/year (850 kWh/kWp, typical UK range 800-950), June about 7x December.
+- **Weather**: monthly average cloudiness for London, plus day-to-day and passing-cloud variation. It is
+  deterministic per date, so every node and every re-run sees the same sky.
+- **Real data (optional, recommended)**: `python3 scripts/fetch_pvgis.py --year 2012` (and 2013, the dataset
+  spans Oct 2012 - Feb 2014) downloads actual hourly PV output for London from PVGIS into `dataset/`. With
+  `solar_source: auto` the simulation then uses the real weather of the simulated date, falling back to the model
+  for dates not covered.
+- Timestamps are treated as UTC/GMT.
+
+Caveats: the monthly London figures in the model are approximate typical-year values, not copied from a specific
+dataset, and the fetch script and PVGIS parser were written to PVGIS's documented CSV format but have **not**
+been run against the live service (it was unreachable from the development sandbox). If the first fetch fails or
+the parse skips the file, the simulation keeps working on the model; please report it.
 
 ## Plotting
 

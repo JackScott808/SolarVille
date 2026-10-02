@@ -9,18 +9,19 @@ import random
 class CapacitorManager:
     """Manages supercapacitor or battery storage for prosumers."""
 
-    def __init__(self, mock_mode: bool = True):
+    def __init__(self, mock_mode: bool = True, capacity_kwh: float = 1.0):
         """
         Initialize capacitor manager.
 
         Args:
             mock_mode: If True, simulate storage without hardware
+            capacity_kwh: Total storage capacity in kWh
         """
         self.mock_mode = mock_mode
         self.logger = logging.getLogger(__name__)
 
         # Storage state
-        self.capacity = 1.0  # kWh total capacity (mock)
+        self.capacity = capacity_kwh  # kWh total capacity (mock)
         self.soc = 0.5  # State of charge (0-1), start at 50%
         self.min_soc = 0.2  # Don't discharge below 20%
         self.max_soc = 1.0  # Don't charge above 100%

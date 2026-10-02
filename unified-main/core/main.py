@@ -34,6 +34,7 @@ from network.server import Server
 from simulation.trading_manager import TradingManager
 from simulation.visualisation_manager import VisualisationManager
 from simulation.data_analysis import load_data
+from simulation.solar_model import create_solar_source
 
 # Utils imports
 from utils.logging import setup_logging
@@ -122,8 +123,15 @@ class SolarVille:
             # Prosumer-specific components
             if self.device.is_prosumer:
                 self.components.update({
-                    'solar_monitor': SolarMonitor(mock_mode=self.config.sim_config.mock_mode),
-                    'capacitor_manager': CapacitorManager(mock_mode=self.config.sim_config.mock_mode)
+                    'solar_monitor': SolarMonitor(
+                        mock_mode=self.config.sim_config.mock_mode,
+                        solar_source=self._create_solar_source(),
+                        interval_seconds=self.config.sim_config.interval_seconds,
+                    ),
+                    'capacitor_manager': CapacitorManager(
+                        mock_mode=self.config.sim_config.mock_mode,
+                        capacity_kwh=self.config.prosumer_config.storage_capacity_kwh,
+                    )
                 })
 
             # HTTP server so peers can send us offers, requests and notifications
@@ -186,6 +194,17 @@ class SolarVille:
         finally:
             self.cleanup()
 
+    def _create_solar_source(self):
+        """Solar output for mock mode: real PVGIS data if present, else the London model."""
+        p = self.config.prosumer_config
+        data_dir = Path(self.config.sim_config.file_path)
+        if not data_dir.is_absolute() and not data_dir.exists():
+            data_dir = ROOT / data_dir
+        source = create_solar_source(p.system_kwp, p.tilt_deg, p.azimuth_deg, p.latitude, p.longitude,
+                                     p.solar_source, str(data_dir.parent))
+        logging.info(f"Solar source: {source.description}")
+        return source
+
     def _start_networking(self):
         """Start the peer-facing server and the background trade processing loop."""
         try:
@@ -245,8 +264,10 @@ class SolarVille:
                     capacitor_manager = self.components.get('capacitor_manager')
 
                     # Get readings from hardware managers
-                    solar_data = solar_manager.get_readings()
-                    scale = sim_config.solar_scale_factor
+                    solar_data = solar_manager.get_readings(timestamp)
+                    # Mock mode already produces household-scale output (see simulation.solar_model);
+                    # only a real table-top panel needs scaling up to act as a house.
+                    scale = 1.0 if sim_config.mock_mode else sim_config.solar_scale_factor
                     solar_energy = solar_data['solar_energy'] * scale  # kWh
                     solar_power = solar_data['solar_power'] * scale    # W
 
