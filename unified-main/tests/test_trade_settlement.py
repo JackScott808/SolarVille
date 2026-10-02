@@ -13,7 +13,7 @@ from unittest.mock import Mock
 
 from core.config import ConfigManager
 from core.device_types import PiDevice
-from core.trade_types import TradeMatch, TradeRequest
+from core.trade_types import TradeMatch, TradeOffer, TradeRequest
 from network.network_manager import NetworkManager
 from simulation.trading_manager import TradingManager
 
@@ -67,7 +67,8 @@ class TestTradeSettlement(unittest.TestCase):
         self._post(offer_amount=1.0, request_amount=0.4)
         self._match_and_process()
 
-        price = GRID_SELL * 1.1  # default offer price
+        # market price for supply 1.0 vs demand 0.4 on a flat 25p/5p tariff: plentiful supply, so cheap
+        price = GRID_SELL + (GRID_BUY - GRID_SELL) * 0.4 / 1.4
         self.assertAlmostEqual(self.seller.energy_sold, 0.4)
         self.assertAlmostEqual(self.buyer.energy_bought, 0.4)
         self.assertAlmostEqual(self.seller.currency, 100 + 0.4 * price)
@@ -139,6 +140,140 @@ class TestTradeSettlement(unittest.TestCase):
         old = TradeRequest(datetime.now(), "pi2", 1.0, 0.2).to_dict()
         self.assertNotIn("expiry", old)
         self.assertIsNone(TradeRequest.from_dict(old).expiry)
+
+
+INTERVAL = "2013-01-15T12:00:00"  # standard band: import 27p, export 8p on the default tariff
+
+
+def make_tariff_manager(device: PiDevice) -> TradingManager:
+    from core.tariff import Tariff
+    config = Mock(spec=ConfigManager)
+    config.get_local_device.return_value = device
+    config.grid_buy_price, config.grid_sell_price = GRID_BUY, GRID_SELL
+    config.tariff = Tariff()
+    manager = TradingManager(config, Mock(spec=NetworkManager))
+    manager.trading_integration = Mock()
+    return manager
+
+
+class TestIntervalStampedTrading(unittest.TestCase):
+    """Trades belong to the simulated interval they were posted for, however late they arrive."""
+
+    def setUp(self):
+        self.seller_dev = PiDevice("pi1", "10.0.0.1", True, "prosumer-pi-1")
+        self.buyer_dev = PiDevice("pi2", "10.0.0.2", False, "consumer-pi-1")
+        self.seller = make_tariff_manager(self.seller_dev)
+        self.buyer = make_tariff_manager(self.buyer_dev)
+
+        async def notify(peer_id, match_id, match):
+            return self.buyer.handle_trade_completion(match_id, TradeMatch.from_dict(match.to_dict())) or True
+        self.seller.trading_integration.notify_trade_completion = notify
+
+    def _run(self, offers, requests):
+        """offers/requests: lists of (amount, interval[, price]). Returns after one match+execute pass."""
+        async def go():
+            for amount, interval, *price in offers:
+                await self.seller.create_offer(amount, price[0] if price else None, ttl=30, interval=interval)
+            for amount, interval, *price in requests:
+                rid = await self.buyer.create_request(amount, price[0] if price else None, ttl=30, interval=interval)
+                self.seller.active_requests[rid] = TradeRequest.from_dict(self.buyer.active_requests[rid].to_dict())
+            await self.seller._match_trades()
+            await self.seller._process_matched_trades()
+        asyncio.run(go())
+
+    def test_default_ask_and_bid_are_the_grid_export_and_import_prices(self):
+        async def go():
+            oid = await self.seller.create_offer(1.0, interval=INTERVAL)
+            rid = await self.buyer.create_request(1.0, interval=INTERVAL)
+            return oid, rid
+        oid, rid = asyncio.run(go())
+        self.assertEqual(self.seller.active_offers[oid].min_price, 0.08)   # what the grid would pay
+        self.assertEqual(self.buyer.active_requests[rid].max_price, 0.27)  # what the grid would charge
+
+    def test_peak_period_widens_the_asks_and_bids(self):
+        peak = "2013-01-15T17:30:00"
+        self.assertEqual(self.seller.grid_prices(peak), (0.08, 0.36))
+        self.assertEqual(self.seller.grid_prices("2013-01-15T03:00:00"), (0.08, 0.12))
+
+    def test_offers_only_trade_with_requests_for_the_same_interval(self):
+        self._run([(1.0, "2013-01-15T12:00:00")], [(0.4, "2013-01-15T12:30:00")])
+        self.assertEqual(self.seller.trade_matches, {})
+        self.assertEqual(self.seller.energy_sold, 0.0)
+
+    def test_same_interval_trades_and_is_booked_to_that_interval(self):
+        self._run([(1.0, INTERVAL)], [(0.4, INTERVAL)])
+        sell = self.seller.settle_interval(surplus=1.0, interval=INTERVAL)
+        buy = self.buyer.settle_interval(deficit=0.4, interval=INTERVAL)
+        self.assertAlmostEqual(sell["p2p_sold"], 0.4)
+        self.assertAlmostEqual(buy["p2p_bought"], 0.4)       # both nodes agree on the interval
+        self.assertAlmostEqual(sell["p2p_price"], buy["p2p_price"])
+        self.assertAlmostEqual(sell["grid_sold"], 0.6)       # the rest of the surplus goes to the grid
+
+    def test_trade_price_is_between_export_and_import_and_respects_scarcity(self):
+        self._run([(1.0, INTERVAL)], [(0.1, INTERVAL)])      # plentiful supply
+        cheap = self.seller.settle_interval(surplus=1.0, interval=INTERVAL)["p2p_price"]
+        self.setUp()
+        self._run([(0.1, INTERVAL)], [(1.0, INTERVAL)])      # scarce supply
+        dear = self.seller.settle_interval(surplus=0.1, interval=INTERVAL)["p2p_price"]
+        self.assertTrue(0.08 <= cheap < dear <= 0.27, (cheap, dear))
+        self.assertLess(cheap, 0.12)
+        self.assertGreater(dear, 0.22)
+
+    def test_trade_price_never_breaks_a_buyers_limit_or_sellers_ask(self):
+        self._run([(1.0, INTERVAL, 0.10)], [(0.4, INTERVAL, 0.12)])  # market price would be ~0.13
+        match = next(iter(self.seller.trade_matches.values()))
+        self.assertAlmostEqual(match.price, 0.12)  # capped at the buyer's bid
+        self.assertGreaterEqual(match.price, 0.10)
+
+    def test_no_trade_when_ask_exceeds_bid(self):
+        self._run([(1.0, INTERVAL, 0.20)], [(0.4, INTERVAL, 0.15)])
+        self.assertEqual(self.seller.trade_matches, {})
+
+    def test_grid_settlement_uses_the_prices_of_that_time_of_day(self):
+        peak = "2013-01-15T17:30:00"
+        night = "2013-01-15T03:00:00"
+        buy_peak = self.buyer.settle_interval(deficit=1.0, interval=peak)
+        buy_night = self.buyer.settle_interval(deficit=1.0, interval=night)
+        self.assertAlmostEqual(buy_peak["grid_cash"], -0.36)
+        self.assertAlmostEqual(buy_night["grid_cash"], -0.12)
+        self.assertEqual((buy_peak["import_price"], buy_peak["export_price"]), (0.36, 0.08))
+        sell = self.seller.settle_interval(surplus=1.0, interval=peak)
+        self.assertAlmostEqual(sell["grid_cash"], 0.08)
+
+    def test_a_trade_that_arrives_after_settlement_is_booked_to_its_interval_and_the_grid_leg_reversed(self):
+        # The seller settles interval k before the trade for k is notified (clock skew)
+        sell_first = self.seller.settle_interval(surplus=1.0, interval=INTERVAL)
+        self.assertAlmostEqual(sell_first["p2p_sold"], 0.0)
+        self.assertAlmostEqual(self.seller.currency, 100 + 1.0 * 0.08)   # all 1 kWh went to the grid at 8p
+        match = TradeMatch("o", "r", "pi1", "pi2", 0.4, 0.15, interval=INTERVAL)
+        self.assertTrue(self.seller.apply_trade("late", match))
+        # 0.4 kWh was sold to the peer at 15p instead of to the grid at 8p
+        self.assertAlmostEqual(self.seller.currency, 100 + 0.6 * 0.08 + 0.4 * 0.15)
+        # and the next interval is untouched
+        nxt = self.seller.settle_interval(surplus=0.0, interval="2013-01-15T12:30:00")
+        self.assertAlmostEqual(nxt["p2p_sold"], 0.0)
+
+    def test_late_trade_for_a_buyer_refunds_the_grid_purchase(self):
+        self.buyer.settle_interval(deficit=1.0, interval=INTERVAL)       # bought 1 kWh at 27p
+        self.assertAlmostEqual(self.buyer.currency, 100 - 0.27)
+        match = TradeMatch("o", "r", "pi1", "pi2", 0.4, 0.15, interval=INTERVAL)
+        self.buyer.apply_trade("late", match)
+        self.assertAlmostEqual(self.buyer.currency, 100 - 0.6 * 0.27 - 0.4 * 0.15)
+
+    def test_a_trade_for_a_future_interval_waits_for_its_own_settlement(self):
+        match = TradeMatch("o", "r", "pi1", "pi2", 0.4, 0.15, interval="2013-01-15T12:30:00")
+        self.seller.apply_trade("early", match)                         # peer is a little ahead of us
+        k = self.seller.settle_interval(surplus=1.0, interval=INTERVAL)
+        k1 = self.seller.settle_interval(surplus=1.0, interval="2013-01-15T12:30:00")
+        self.assertAlmostEqual(k["p2p_sold"], 0.0)
+        self.assertAlmostEqual(k1["p2p_sold"], 0.4)
+
+    def test_interval_survives_the_wire_format(self):
+        offer = TradeOffer.from_dict(TradeOffer(datetime.now(), "pi1", 1.0, 0.08, datetime.now(), INTERVAL).to_dict())
+        request = TradeRequest.from_dict(TradeRequest(datetime.now(), "pi2", 1.0, 0.27, interval=INTERVAL).to_dict())
+        match = TradeMatch.from_dict(TradeMatch("o", "r", "pi1", "pi2", 1.0, 0.1, interval=INTERVAL).to_dict())
+        self.assertEqual((offer.interval, request.interval, match.interval), (INTERVAL, INTERVAL, INTERVAL))
+        self.assertNotIn("interval", TradeMatch("o", "r", "a", "b", 1.0, 0.1).to_dict())  # old messages unchanged
 
 
 class TestRealNetworkIntegration(unittest.TestCase):

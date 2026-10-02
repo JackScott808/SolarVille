@@ -28,7 +28,8 @@ THEMES = {
 
 # Row keys the plot reads; VisualisationManager guarantees all are present.
 ROW_KEYS = ("timestamp", "demand", "generation", "balance", "storage_level", "currency",
-            "p2p_sold", "p2p_bought", "grid_sold", "grid_bought")
+            "p2p_sold", "p2p_bought", "grid_sold", "grid_bought",
+            "import_price", "export_price", "p2p_price")  # prices may be None (blank in the CSV)
 
 
 def _x_axis(ax, timescale: str) -> None:
@@ -50,8 +51,8 @@ def _x_axis(ax, timescale: str) -> None:
 class EnergyFigure:
     """A stacked set of panels sharing one time axis.
 
-    Prosumers get four panels (demand vs generation, storage, balance, money);
-    consumers three (no generation or storage).
+    Prosumers get five panels (demand vs generation, storage, balance, prices, money);
+    consumers four (no generation or storage).
     """
 
     def __init__(self, title: str, timescale: str, is_prosumer: bool, theme: str = "light"):
@@ -62,8 +63,9 @@ class EnergyFigure:
         self.timescale = timescale
         self.title = title
 
-        names = ["energy", "storage", "balance", "money"] if is_prosumer else ["energy", "balance", "money"]
-        heights = {"energy": 3, "storage": 1.6, "balance": 2, "money": 1.8}
+        names = (["energy", "storage", "balance", "prices", "money"] if is_prosumer
+                 else ["energy", "balance", "prices", "money"])
+        heights = {"energy": 3, "storage": 1.6, "balance": 2, "prices": 1.8, "money": 1.8}
         self.fig, axes = plt.subplots(
             len(names), 1, sharex=True, figsize=(11, 2.3 * len(names) + 1.2),
             gridspec_kw={"height_ratios": [heights[n] for n in names], "hspace": 0.42},
@@ -131,6 +133,24 @@ class EnergyFigure:
         ax.set_ylabel("Balance kWh", color=c["ink2"], fontsize=9)
         if self.is_prosumer:  # one series needs no legend; the panel title carries it
             self._legend(ax)
+
+        # --- Prices: the grid's two prices as steps, and what peer trades actually cleared at ----
+        ax = self.axes["prices"]
+        imports = [r.get("import_price") for r in rows]
+        exports = [r.get("export_price") for r in rows]
+        if any(v is not None for v in imports + exports):
+            ax.step(t, imports, where="post", color=c["ink2"], linewidth=2, label="Grid import")
+            ax.step(t, exports, where="post", color=c["ink2"], linewidth=2, linestyle=(0, (4, 3)),
+                    label="Grid export")
+            traded = [(r["timestamp"], r["p2p_price"]) for r in rows if r.get("p2p_price") is not None]
+            if traded:
+                ax.plot(*zip(*traded), linestyle="none", marker="o", markersize=7, color=c["money"],
+                        markeredgecolor=c["surface"], markeredgewidth=1.5, label="Peer trade")
+            self._legend(ax)
+            top = max((v for v in imports if v is not None), default=0.3)
+            ax.set_ylim(0, top * 1.15)
+            ax.yaxis.set_major_formatter(FormatStrFormatter("£%.2f"))
+        ax.set_ylabel("£ per kWh", color=c["ink2"], fontsize=9)
 
         # --- Money ---------------------------------------------------------------------
         ax = self.axes["money"]

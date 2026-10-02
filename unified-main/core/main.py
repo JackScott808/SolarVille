@@ -29,6 +29,7 @@ from network.trading_integration import TradingIntegration
 from network.discovery import PeerDiscovery
 from network.health_check import HealthChecker
 from network.server import Server
+from network.sync import StartBarrier
 
 # Simulation imports
 from simulation.trading_manager import TradingManager
@@ -54,10 +55,12 @@ class SolarVille:
         self._interrupted = False
         self.plot_options = {}
         self.bind_host = "0.0.0.0"
+        self.standalone = False
+        self.sync_timeout = 20.0
         
     def initialize(self, config_path: str = None, device_name: str = None, mock: bool = False,
                    plot_live: bool = True, plot_dir: str = "output", plot_theme: str = "light",
-                   bind_host: str = "0.0.0.0"):
+                   bind_host: str = "0.0.0.0", standalone: bool = False, sync_timeout: float = 20.0):
         """Initialize all system components"""
         try:
             # Load configuration
@@ -87,6 +90,8 @@ class SolarVille:
             logging.info(f"Running as: {self.device.name} ({'prosumer' if self.device.is_prosumer else 'consumer'})")
 
             self.bind_host = bind_host
+            self.standalone = standalone
+            self.sync_timeout = sync_timeout
             self.plot_options = {"live": plot_live, "output_dir": plot_dir, "theme": plot_theme}
 
             # Initialize components based on device role
@@ -183,6 +188,9 @@ class SolarVille:
 
             self._start_networking()
 
+            # Begin together with the other nodes, so everyone's simulated intervals line up
+            self._synchronise_start()
+
             # Start main simulation loop
             self._run_simulation(data)
 
@@ -221,6 +229,15 @@ class SolarVille:
         self._loop_thread.start()
         self._run_async(self.components['trading_manager'].start_processing())
 
+    def _synchronise_start(self):
+        """Wait for the other devices and start at the same moment (see network/sync.py)."""
+        if self.standalone:
+            logging.info("Standalone: not waiting for other devices")
+            return
+        barrier = StartBarrier(self.config, self.components['network_manager'], self.server,
+                               timeout=self.sync_timeout)
+        barrier.wait()
+
     def _run_async(self, coro, timeout: float = 10.0):
         """Run a coroutine on the background trading loop and wait for its result."""
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
@@ -250,8 +267,13 @@ class SolarVille:
         logging.info(f"Sleep time between readings: {sleep_time:.2f}s")
 
         trading_manager = self.components['trading_manager']
-        # Offers/requests live for one interval of real time
-        offer_ttl = max(sleep_time, 1.0)
+        # Offers/requests are stamped with their simulated interval and only trade within it, so the
+        # time-to-live just needs to cover peers being slightly out of step
+        offer_ttl = max(sleep_time * 1.5, 1.0)
+
+        # Interval k ends at a fixed deadline (start + (k+1) * sleep_time) rather than "sleep one interval
+        # after finishing the last", so processing time can't make the nodes drift apart.
+        loop_start = time.monotonic()
 
         # Run simulation
         try:
@@ -314,25 +336,28 @@ class SolarVille:
                 # settled with the grid below.
                 surplus = max(reading.balance, 0.0)
                 deficit = max(-reading.balance, 0.0)
+                interval = timestamp.isoformat()  # the simulated interval these trades belong to
                 if surplus > MIN_TRADE_KWH:
                     logging.info(f"Surplus: {surplus:.3f} kWh - creating trade offer")
-                    self._run_async(trading_manager.create_offer(surplus, ttl=offer_ttl))
+                    self._run_async(trading_manager.create_offer(surplus, ttl=offer_ttl, interval=interval))
                 if deficit > MIN_TRADE_KWH:
                     logging.info(f"Deficit: {deficit:.3f} kWh - creating trade request")
-                    self._run_async(trading_manager.create_request(deficit, ttl=offer_ttl))
+                    self._run_async(trading_manager.create_request(deficit, ttl=offer_ttl, interval=interval))
 
-                # Sleep to maintain simulation speed (peers match and settle meanwhile)
-                time.sleep(sleep_time)
+                # Wait for the end of this interval (peers match and settle meanwhile)
+                time.sleep(max(0.0, loop_start + (idx + 1) * sleep_time - time.monotonic()))
 
-                trade = trading_manager.settle_interval(surplus=surplus, deficit=deficit)
+                trade = trading_manager.settle_interval(surplus=surplus, deficit=deficit, interval=interval)
 
                 # Log current state every few readings
                 if idx % 1 == 0:
                     log_msg = f"[{timestamp}] Demand: {reading.demand:.3f} kWh, Balance: {reading.balance:+.3f} kWh"
                     if self.device.is_prosumer:
                         log_msg += f", Gen: {reading.generation:.3f} kWh, SOC: {reading.storage_level:.1f}%"
-                    log_msg += (f" | P2P sold/bought: {trade['p2p_sold']:.3f}/{trade['p2p_bought']:.3f} kWh,"
-                                f" grid sold/bought: {trade['grid_sold']:.3f}/{trade['grid_bought']:.3f} kWh,"
+                    p2p_price = f"£{trade['p2p_price']:.3f}" if trade['p2p_price'] is not None else "-"
+                    log_msg += (f" | P2P sold/bought: {trade['p2p_sold']:.3f}/{trade['p2p_bought']:.3f} kWh @ {p2p_price},"
+                                f" grid sold/bought: {trade['grid_sold']:.3f}/{trade['grid_bought']:.3f} kWh"
+                                f" (export £{trade['export_price']:.2f}, import £{trade['import_price']:.2f}),"
                                 f" balance: £{trade['currency']:.2f}")
                     print(log_msg, flush=True)  # Print to stdout
                     logging.info(log_msg)
@@ -390,6 +415,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--bind', type=str, default='0.0.0.0',
                         help='Address the server listens on (default 0.0.0.0). Use a device address, e.g. 127.0.0.2, '
                              'to run several nodes on one machine')
+    parser.add_argument('--standalone', action='store_true',
+                        help='Do not wait for the other devices before starting (single-node development)')
+    parser.add_argument('--sync-timeout', type=float, default=20.0,
+                        help='Seconds to wait for the other devices before simulating alone (default 20)')
     parser.add_argument('--no-plot', action='store_true', help='Do not open the live plot window (the plot is still saved)')
     parser.add_argument('--plot-dir', type=str, default='output', help='Directory for the saved plot and CSV (default: output)')
     parser.add_argument('--plot-theme', choices=['light', 'dark'], default='light', help='Plot colour theme')
@@ -403,7 +432,8 @@ def main():
     solarville = SolarVille()
     if not solarville.initialize(args.config, args.device, args.mock,
                               plot_live=not args.no_plot, plot_dir=args.plot_dir, plot_theme=args.plot_theme,
-                              bind_host=args.bind):
+                              bind_host=args.bind, standalone=args.standalone,
+                              sync_timeout=args.sync_timeout):
         sys.exit(1)
 
     # Start simulation

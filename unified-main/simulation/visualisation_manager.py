@@ -132,6 +132,9 @@ class VisualisationManager:
             "p2p_bought": trade.get("p2p_bought", 0.0),
             "grid_sold": trade.get("grid_sold", 0.0),
             "grid_bought": trade.get("grid_bought", 0.0),
+            "import_price": trade.get("import_price"),
+            "export_price": trade.get("export_price"),
+            "p2p_price": trade.get("p2p_price"),
         }
         self.rows.append(row)
         if self._queue is not None and self._process is not None and self._process.is_alive():

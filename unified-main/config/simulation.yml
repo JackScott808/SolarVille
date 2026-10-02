@@ -25,3 +25,15 @@ prosumer:
   longitude: -0.1278
   solar_source: auto        # auto = real PVGIS data if present, otherwise the model; or: model, pvgis
   storage_capacity_kwh: 5.0 # a typical home battery
+
+# Grid prices (£/kWh) and how peer-to-peer trades are priced. Bands are in local London time.
+# These are REPRESENTATIVE of UK domestic time-of-use tariffs and the Smart Export Guarantee, not
+# a specific supplier's rates - change them to model another.
+tariff:
+  timezone: Europe/London
+  export_price: 0.08        # what the grid pays for exports; far below what it charges for imports
+  import_bands:             # first match wins; the last must cover the whole day
+    - {name: off-peak, start: "00:30", end: "05:30", price: 0.12}
+    - {name: peak,     start: "16:00", end: "19:00", price: 0.36}
+    - {name: standard, start: "00:00", end: "24:00", price: 0.27}
+  p2p_pricing: supply_demand  # price between export and import, by local scarcity; or: mid_market

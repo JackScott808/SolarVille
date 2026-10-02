@@ -13,15 +13,19 @@ class TradeOffer:
     amount: float         # kWh available to sell
     min_price: float      # Minimum acceptable price per kWh
     expiry: datetime      # When this offer expires
+    interval: Optional[str] = None  # Simulated interval the energy belongs to (ISO timestamp)
     
     def to_dict(self) -> Dict:
-        return {
+        data = {
             "timestamp": self.timestamp.isoformat(),
             "seller_id": self.seller_id,
             "amount": self.amount,
             "min_price": self.min_price,
             "expiry": self.expiry.isoformat()
         }
+        if self.interval is not None:
+            data["interval"] = self.interval
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'TradeOffer':
@@ -30,7 +34,8 @@ class TradeOffer:
             seller_id=data["seller_id"],
             amount=data["amount"],
             min_price=data["min_price"],
-            expiry=datetime.fromisoformat(data["expiry"])
+            expiry=datetime.fromisoformat(data["expiry"]),
+            interval=data.get("interval")
         )
     
 @dataclass
@@ -42,6 +47,7 @@ class TradeRequest:
     max_price: float      # Maximum acceptable price per kWh
     priority: int = 0     # Priority level (higher = more urgent)
     expiry: Optional[datetime] = None  # When this request lapses (None = never)
+    interval: Optional[str] = None     # Simulated interval the energy is needed in (ISO timestamp)
     
     def to_dict(self) -> Dict:
         data = {
@@ -53,6 +59,8 @@ class TradeRequest:
         }
         if self.expiry is not None:
             data["expiry"] = self.expiry.isoformat()
+        if self.interval is not None:
+            data["interval"] = self.interval
         return data
     
     @classmethod
@@ -63,7 +71,8 @@ class TradeRequest:
             amount=data["amount"],
             max_price=data["max_price"],
             priority=data.get("priority", 0),
-            expiry=datetime.fromisoformat(data["expiry"]) if data.get("expiry") else None
+            expiry=datetime.fromisoformat(data["expiry"]) if data.get("expiry") else None,
+            interval=data.get("interval")
         )
 
 @dataclass
@@ -78,9 +87,10 @@ class TradeMatch:
     status: str = "pending"  # pending/confirmed/completed/failed
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    interval: Optional[str] = None  # Simulated interval this trade belongs to (ISO timestamp)
     
     def to_dict(self) -> Dict:
-        return {
+        data = {
             "offer_id": self.offer_id,
             "request_id": self.request_id,
             "seller_id": self.seller_id,
@@ -91,6 +101,9 @@ class TradeMatch:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat()
         }
+        if self.interval is not None:
+            data["interval"] = self.interval
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'TradeMatch':
@@ -103,5 +116,6 @@ class TradeMatch:
             price=data["price"],
             status=data.get("status", "pending"),
             created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"])
+            updated_at=datetime.fromisoformat(data["updated_at"]),
+            interval=data.get("interval")
         )

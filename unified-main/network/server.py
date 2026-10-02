@@ -52,6 +52,12 @@ class Server:
             "end_time": None
         }
         
+        # Start barrier (see network/sync.py): peers report ready, the leader tells everyone to go
+        self.ready = False
+        self.start_event = threading.Event()
+        self.start_delay = 0.0
+        self.start_received_at: Optional[float] = None
+        
         # Server status
         self.server_thread: Optional[threading.Thread] = None
         self.is_running = False
@@ -61,6 +67,10 @@ class Server:
         
         self.logger.info("Server initialized")
     
+    def set_ready(self, ready: bool = True) -> None:
+        """Mark this node as ready to start the simulation (reported on /sim/ready)."""
+        self.ready = ready
+
     def register_trading_manager(self, trading_manager):
         """
         Register a trading manager with the server.
@@ -246,6 +256,34 @@ class Server:
                         "message": str(e)
                     }), 500
         
+        # Start barrier endpoints
+        @self.app.route('/sim/ready', methods=['GET'])
+        def sim_ready() -> Response:
+            """Report whether this node is waiting at the start barrier."""
+            local_device = self.config.get_local_device()
+            return jsonify({
+                "ready": self.ready,
+                "started": self.start_event.is_set(),
+                "device": local_device.name if local_device else None
+            })
+
+        @self.app.route('/sim/start', methods=['POST'])
+        def sim_start() -> Response:
+            """Start the simulation `delay` seconds from now (a relative delay, so peers' clocks needn't agree)."""
+            data = request.json or {}
+            try:
+                delay = float(data.get("delay", 0.0))
+            except (TypeError, ValueError):
+                return jsonify({"status": "error", "message": "delay must be a number"}), 400
+            if delay < 0:
+                return jsonify({"status": "error", "message": "delay cannot be negative"}), 400
+            if not self.start_event.is_set():
+                self.start_delay = delay
+                self.start_received_at = time.monotonic()
+                self.start_event.set()
+                self.logger.info(f"Start signal received: starting in {delay:.2f}s")
+            return jsonify({"status": "success"})
+
         # Synchronization endpoint
         @self.app.route('/sync', methods=['POST'])
         def sync() -> Response:

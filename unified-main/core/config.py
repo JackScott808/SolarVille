@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Optional, List
 from core.device_types import PiDevice
+from core.tariff import Tariff
 from core.constants import (
     DEFAULT_PORT, RETRY_ATTEMPTS, TIMEOUT_SECONDS,
     GRID_BUY_PRICE, GRID_SELL_PRICE,
@@ -71,6 +72,7 @@ class ConfigManager:
         self.sim_config = self.simulation_config  # Alias for convenience
         self.hardware_config = HardwareConfig()
         self.prosumer_config = ProsumerConfig()
+        self.tariff = Tariff()  # time-of-use grid prices and peer-to-peer pricing rule
         self.devices: Dict[str, PiDevice] = {}
         self._local_device_name: Optional[str] = None  # explicit override (e.g. --device)
 
@@ -121,6 +123,9 @@ class ConfigManager:
 
             if 'prosumer' in data:
                 self.prosumer_config = ProsumerConfig(**data['prosumer'])
+
+            if 'tariff' in data:
+                self.tariff = Tariff.from_dict(data['tariff'])
 
             # Update mock mode if specified
             if 'hardware' in data and 'mock_mode' in data['hardware']:
